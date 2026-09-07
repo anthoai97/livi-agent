@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+
+printf '%s\n' 'Running formatting, linting, build, and type checks...'
+pnpm check
