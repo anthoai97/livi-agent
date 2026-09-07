@@ -1,0 +1,22 @@
+{
+  "name": "@livi/decorator-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./contracts": "./dist/contracts.js"
+  },
+  "scripts": {
+    "build": "tsgo -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsgo -p tsconfig.json"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "workspace:*",
+    "@earendil-works/pi-agent-core": "workspace:*",
+    "@earendil-works/pi-ai": "workspace:*",
+    "@earendil-works/pi-protocol": "workspace:*",
+    "@earendil-works/pi-server": "workspace:*"
+  }
+}

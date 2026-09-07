@@ -20,3 +20,9 @@ retains the upstream TypeScript provider catalog structure.
 
 The AI package declares its existing `@smithy/types` import explicitly for pnpm's
 isolated dependency layout.
+
+`packages/decorator-agent/src/services` adapts the same revision's
+`packages/coding-agent/src/experimental/services` transcript and session service
+composition. The wrapper exposes only prompt/abort and create/attach/detach;
+plugin, model-management, and coding capabilities are not exposed. Its MIT
+notice is retained in `packages/decorator-agent/LICENSE`.
