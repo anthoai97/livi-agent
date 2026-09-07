@@ -30,7 +30,7 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
 
-  packages/agent-core:
+  packages/agent:
     dependencies:
       '@earendil-works/chord':
         specifier: workspace:*
@@ -105,7 +105,7 @@ importers:
         version: link:../../vendor/pi/packages/chord
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
-        version: link:../agent-core
+        version: link:../agent
       '@earendil-works/pi-ai':
         specifier: workspace:*
         version: link:../../vendor/pi/packages/ai
@@ -123,7 +123,7 @@ importers:
         version: link:../../vendor/pi/packages/chord
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
-        version: link:../agent-core
+        version: link:../agent
       '@earendil-works/pi-ai':
         specifier: workspace:*
         version: link:../../vendor/pi/packages/ai
@@ -151,7 +151,7 @@ importers:
     dependencies:
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
-        version: link:../../agent-core
+        version: link:../../agent
       '@earendil-works/pi-ai':
         specifier: workspace:*
         version: link:../../../vendor/pi/packages/ai
@@ -261,7 +261,7 @@ importers:
         version: link:../chord
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
-        version: link:../../../../packages/agent-core
+        version: link:../../../../packages/agent
       '@earendil-works/pi-protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -2701,7 +2701,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
+      vitest: 4.1.9(@types/node@22.19.19)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@22.19.19)(tsx@4.22.1)(yaml@2.9.0))
 
   '@vitest/expect@4.1.9':
     dependencies:

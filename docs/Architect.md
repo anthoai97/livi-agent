@@ -16,7 +16,7 @@ The server owns a SQLite repository and one `DecoratorSession` runtime per open 
 | --- | --- |
 | `packages/client` | React chat, reconnect and subscription hydration, Markdown rendering |
 | `packages/server` | HTTP, WebSocket adapter, stable server identity, SQLite ownership, shutdown |
-| `packages/agent-core` | Copied PI agent engine and durable harness |
+| `packages/agent` | Copied PI agent engine and durable harness |
 | `packages/decorator-agent` | DecoratorSession and browser-safe service contracts |
 | `packages/session-backends/sqlite-node` | Copied PI Node SQLite backend and migrations |
 | `vendor/pi/packages` | Copied AI, Chord, telemetry, protocol, client and server libraries |

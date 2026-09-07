@@ -5,7 +5,7 @@ Revision: `da840b6216578c2a571d0374ac6a2091a83f9d91`
 License: MIT (see [LICENSE](LICENSE)).
 
 `packages/{ai,chord,telemetry,protocol,client,server}` retain their upstream names.
-Upstream `packages/agent` lives at `../../packages/agent-core`; upstream
+Upstream `packages/agent` lives at `../../packages/agent`; upstream
 `packages/session-backends/sqlite-node` lives at `../../packages/session-backends/sqlite-node`.
 Each extracted package also carries the upstream MIT license.
 

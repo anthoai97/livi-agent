@@ -16,8 +16,8 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: [
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: src("../../../../packages/agent-core/src/index.ts") },
-			{ find: /^@earendil-works\/pi-agent-core\/(.+)$/, replacement: `${src("../../../../packages/agent-core/src/")}$1.ts` },
+			{ find: /^@earendil-works\/pi-agent-core$/, replacement: src("../../../../packages/agent/src/index.ts") },
+			{ find: /^@earendil-works\/pi-agent-core\/(.+)$/, replacement: `${src("../../../../packages/agent/src/")}$1.ts` },
 			{ find: /^@earendil-works\/pi-ai$/, replacement: src("../ai/src/index.ts") },
 			{ find: /^@earendil-works\/pi-ai\/(.+)$/, replacement: `${src("../ai/src/")}$1.ts` },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: src("../telemetry/src/index.ts") },

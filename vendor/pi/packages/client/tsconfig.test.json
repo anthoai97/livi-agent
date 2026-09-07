@@ -10,7 +10,7 @@
     ],
     "paths": {
       "@earendil-works/pi-agent-core": [
-        "../../../../packages/agent-core/src/index.ts"
+        "../../../../packages/agent/src/index.ts"
       ],
       "@earendil-works/pi-ai": [
         "../ai/src/index.ts"

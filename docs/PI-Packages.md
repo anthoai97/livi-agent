@@ -4,7 +4,7 @@ Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provena
 
 | PI package | Livi location | Direct PI dependencies |
 | --- | --- | --- |
-| `agent` | `packages/agent-core` | AI, Chord, telemetry |
+| `agent` | `packages/agent` | AI, Chord, telemetry |
 | `ai` | `vendor/pi/packages/ai` | telemetry |
 | `chord` | `vendor/pi/packages/chord` | None |
 | `telemetry` | `vendor/pi/packages/telemetry` | None |
