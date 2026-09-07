@@ -1,0 +1,16 @@
+{
+  "name": "@livi/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@earendil-works/chord": "workspace:*",
+    "@earendil-works/pi-client": "workspace:*",
+    "@livi/decorator-agent": "workspace:*",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-markdown": "10.1.0"
+  },
+  "devDependencies": { "@types/react": "19.1.16", "@types/react-dom": "19.1.9", "vite": "7.1.5" }
+}

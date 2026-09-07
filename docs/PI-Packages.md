@@ -1,52 +1,22 @@
 # PI Package Relationships
 
-Reference: the local [PI packages](../../pi/packages/) checkout inspected on September 6, 2026. Dependencies below describe that checkout, not a guarantee about future versions.
+Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provenance](../vendor/pi/PROVENANCE.md) for attribution and adaptations. The sibling `../pi` checkout was an implementation reference, not a runtime or build dependency.
 
-## Package overview
-
-| Package | Purpose | Direct PI workspace dependencies |
+| PI package | Livi location | Direct PI dependencies |
 | --- | --- | --- |
-| `ai` | Model provider integration and response streaming | `telemetry` |
-| `agent` | Agent Core: state, model/tool loop, execution events, and the durable harness | `ai`, `chord`, `telemetry` |
-| `coding-agent` | Coding assistant: sessions, coding tools, prompts, extensions, and CLI | `agent`, `ai`, `tui`, `chord` |
-| `tui` | Terminal rendering and interactive UI components | None |
-| `chord` | Plugin composition, service interfaces, and synchronized state | None |
-| `protocol` | Message envelopes, encoding, and framing for client/server communication | `chord` |
-| `client` | Connects to PI servers and calls or subscribes to services | `protocol`, `chord` |
-| `server` | Routes client requests to hosted sessions and services | `agent`, `protocol`, `chord` |
-| `session-backends/sqlite-node` | SQLite persistence for the durable session system | `agent`, `ai` |
-| `telemetry` | Shared tracing interfaces and utilities | None |
-| `evals` | Evaluates coding-agent behavior using models | `coding-agent`, `ai` as development dependencies |
+| `agent` | `packages/agent-core` | AI, Chord, telemetry |
+| `ai` | `vendor/pi/packages/ai` | telemetry |
+| `chord` | `vendor/pi/packages/chord` | None |
+| `telemetry` | `vendor/pi/packages/telemetry` | None |
+| `protocol` | `vendor/pi/packages/protocol` | Chord |
+| `client` | `vendor/pi/packages/client` | protocol, Chord |
+| `server` | `vendor/pi/packages/server` | agent, protocol, Chord |
+| `session-backends/sqlite-node` | `packages/session-backends/sqlite-node` | agent, AI |
 
-“None” means no dependencies on other PI workspace packages; external dependencies may still exist. The table lists runtime dependencies except for `evals`. `coding-agent` additionally declares `client`, `protocol`, and `server` as development dependencies.
+“None” refers to PI dependencies; packages can have external dependencies. Copied packages retain their upstream package names and use workspace links.
 
-## Main relationships
+The execution chain is **DecoratorSession → AgentHarness/main lane → PI AI → Gemini**. The application registers only the Google provider and no tools. Core interfaces remain available for durable SQLite persistence and PI routing, while browser-facing contracts restrict application capabilities to chat.
 
-The central execution chain is **Coding Agent → Agent Core → PI AI → Model Provider**.
+The presentation chain is **React → PI client → framed protocol over WebSocket → PI server → Chord service endpoints**. Server-scoped endpoints expose conversation discovery and management. Session-scoped endpoints expose prompt/abort and replicated transcript/execution state. Every presentation gets its own attachment and subscriptions.
 
-`coding-agent` builds its `AgentSession` around an `Agent` from `@earendil-works/pi-agent-core`, whose repository folder is `packages/agent`. The wrapper adds coding-specific tools and application behavior. `tui` provides the terminal interface.
-
-The client/server stack supports running the agent separately from its interface. `client` and `server` communicate using `protocol`, while `chord` supplies service and state-sharing machinery. This stack is experimental. `client` is a communication library, not a ready-made chat UI.
-
-`session-backends/sqlite-node` supplies persistence for durable sessions. `telemetry` supplies tracing abstractions, and `evals` measures application behavior.
-
-## Mapping to Livi
-
-| Livi package | PI reference |
-| --- | --- |
-| `agent-core` | Copy and simplify `packages/agent` |
-| `decorator-agent` | Follow the application composition pattern of `packages/coding-agent` |
-
-Livi's `DecoratorSession` will wrap its local `Agent`, adding decoration prompts, tools, and room integration.
-
-PI's current `agent` package depends on `ai`, `chord`, and `telemetry`. Inspect which dependencies the retained features require before simplifying the copied core. The two-folder plan defines Livi's own packages; it does not mean the implementation has only two dependencies.
-
-## Source references
-
-- [Coding-agent dependencies](../../pi/packages/coding-agent/package.json)
-- [SDK construction of Agent and AgentSession](../../pi/packages/coding-agent/src/core/sdk.ts)
-- [Agent Core dependencies](../../pi/packages/agent/package.json)
-- [Chord overview](../../pi/packages/chord/README.md)
-- [Client overview](../../pi/packages/client/README.md)
-- [Server overview](../../pi/packages/server/README.md)
-- [Protocol overview](../../pi/packages/protocol/README.md)
+Livi adapts only the necessary service composition from PI's `coding-agent/src/experimental/services`. It does not copy the coding-agent application, tools, terminal UI, plugin loading, or coding execution environment.
