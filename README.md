@@ -13,7 +13,7 @@ cp .env.example .env
 pnpm dev
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api/bootstrap`, `/health`, and `/ws` to the server on `127.0.0.1:3001`. Both services bind to loopback by default. The key stays on the server. `GEMINI_MODEL` defaults to `gemini-2.5-flash`; set it to a model present in the retained PI catalog when needed.
+Open http://127.0.0.1:5173. Vite proxies `/api/bootstrap`, `/health`, and `/ws` to the server on `127.0.0.1:3001`. Both services bind to loopback by default. The key stays on the server. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`; set it to a model present in the retained PI catalog when needed.
 
 For a built app:
 

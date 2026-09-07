@@ -1,7 +1,7 @@
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { startLiviServer } from '../src/server.ts';
 
-const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-2.5-flash' }] });
+const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-3.5-flash-lite' }] });
 const models = createModels();
 models.setProvider(faux.provider);
 faux.setResponses([async () => {

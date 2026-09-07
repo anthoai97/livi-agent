@@ -7,7 +7,7 @@ import { startLiviServer } from '../packages/server/src/server.js';
 import { createModels, fauxProvider, fauxAssistantMessage } from '../vendor/pi/packages/ai/dist/index.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'livi-browser-'));
-const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-2.5-flash' }], tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } });
+const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-3.5-flash-lite' }], tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } });
 const models = createModels();
 models.setProvider(faux.provider);
 faux.setResponses([

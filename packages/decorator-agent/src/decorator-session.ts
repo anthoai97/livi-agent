@@ -62,8 +62,8 @@ export class DecoratorSession implements RoutedSessionHandle {
       models.setProvider(googleProvider());
       registry = models;
     }
-    const model = registry.getModel("google", options.modelId ?? "gemini-2.5-flash");
-    if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-2.5-flash"}`);
+    const model = registry.getModel("google", options.modelId ?? "gemini-3.5-flash-lite");
+    if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-3.5-flash-lite"}`);
     const { harness, open } = await AgentHarness.create({
       session: options.session, models: registry, model,
       tools: [], activeToolNames: [], resources: {},

@@ -11,7 +11,7 @@ async function fixture() {
   const repo = new MemorySessionRepo();
   cleanup.push(() => repo.close(context));
   const stored = await repo.create({}, context);
-  const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-2.5-flash" }] });
+  const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
   const models = createModels();
   models.setProvider(faux.provider);
   const runtime = await DecoratorSession.create({ session: stored, models });

@@ -68,7 +68,7 @@ function messages(transcript: Transcript): string[] {
 
 test('real WebSocket routes isolate conversations, stream, reconnect, and survive SQLite restart', { timeout: 30_000 }, async (t) => {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'livi-server-'));
-  const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-2.5-flash' }], tokensPerSecond: 100, tokenSize: { min: 1, max: 1 } });
+  const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-3.5-flash-lite' }], tokensPerSecond: 100, tokenSize: { min: 1, max: 1 } });
   const models = createModels();
   models.setProvider(faux.provider);
   const started = Promise.withResolvers<void>();
@@ -187,7 +187,7 @@ test('a killed server resumes the durable accepted operation without duplicating
   await exited;
   await first.client.dispose();
 
-  const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-2.5-flash' }] });
+  const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-3.5-flash-lite' }] });
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('Recovered room design')]);
