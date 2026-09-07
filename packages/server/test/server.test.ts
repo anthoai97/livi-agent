@@ -161,6 +161,62 @@ test('real WebSocket routes isolate conversations, stream, reconnect, and surviv
   assert.deepEqual(errors, []);
 });
 
+test('provider optional fields stream over WebSocket and preserve signatures after reconnect', { timeout: 30_000 }, async (t) => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), 'livi-provider-fields-'));
+  const faux = fauxProvider({ provider: 'google', models: [{ id: 'gemini-3.5-flash-lite' }], tokensPerSecond: 100, tokenSize: { min: 1, max: 1 } });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const content = [
+    { type: 'thinking' as const, thinking: 'Considering the room.', thinkingSignature: undefined },
+    { type: 'thinking' as const, thinking: 'Use warm lighting.', thinkingSignature: 'dGhpbmtpbmc=' },
+    { type: 'text' as const, text: 'Choose a warm ', textSignature: undefined },
+    { type: 'text' as const, text: 'floor lamp.', textSignature: 'dGV4dA==' },
+  ];
+  const reply = fauxAssistantMessage(content);
+  reply.responseId = undefined;
+  faux.setResponses([reply, (request) => {
+    const previous = request.messages.find((message) => message.role === 'assistant');
+    assert.ok(previous);
+    assert.deepEqual(previous.content, JSON.parse(JSON.stringify(content)));
+    return fauxAssistantMessage('A linen shade fits.');
+  }]);
+  const errors: Error[] = [];
+  const server = await startLiviServer({ dataDirectory, port: 0, models, onError: (error) => errors.push(error) });
+  const connection = await connect(server);
+  t.after(async () => {
+    await connection.client.dispose();
+    await server.close();
+    await rm(dataDirectory, { recursive: true, force: true });
+  });
+  const room = await connection.management.create({}, context);
+  const attached = await attach(connection, room.sessionId);
+  let sawStreaming = false;
+  const unsubscribe = attached.transcript.state.subscribe((state) => {
+    if (state.snapshot?.operation?.streamingMessage?.content.some((block) => block.type === 'text' && block.text.length > 0)) sawStreaming = true;
+  });
+  assert.equal((await attached.controller.prompt({ message: 'Suggest lighting' }, context)).accepted, true);
+  await eventually(() => {
+    assert.deepEqual(errors, [], 'Provider fields must be valid on the protocol wire');
+    return messages(attached.transcript).includes('floor lamp.') && attached.transcript.state.value?.snapshot?.operation === null;
+  });
+  unsubscribe();
+  assert.equal(sawStreaming, true);
+  await attached.binding.dispose(context);
+  connection.client.disconnect();
+  await connection.binding.rebind(false, context);
+  await eventually(() => server.connectionCount === 0);
+  await connection.client.reconnect();
+  await connection.binding.rebind(true, context);
+  const reconnected = await attach(connection, room.sessionId);
+  assert.deepEqual(messages(reconnected.transcript), ['Suggest lighting', 'Choose a warm ', 'floor lamp.']);
+  const entry = reconnected.transcript.state.value?.snapshot?.transcript.find((entry) => entry.type === 'message' && entry.message.role === 'assistant');
+  assert.ok(entry?.type === 'message' && entry.message.role === 'assistant');
+  assert.deepEqual(entry.message.content, JSON.parse(JSON.stringify(content)));
+  assert.equal((await reconnected.controller.prompt({ message: 'Which shade?' }, context)).accepted, true);
+  await eventually(() => messages(reconnected.transcript).includes('A linen shade fits.') && reconnected.transcript.state.value?.snapshot?.operation === null);
+  assert.deepEqual(errors, []);
+});
+
 test('a killed server resumes the durable accepted operation without duplicating the user message', { timeout: 30_000 }, async (t) => {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'livi-recovery-'));
   const child = fork(new URL('./interrupted-server.ts', import.meta.url), [dataDirectory], { execArgv: ['--import', 'tsx'], stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });

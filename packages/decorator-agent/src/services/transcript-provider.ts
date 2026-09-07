@@ -31,7 +31,9 @@ export function createTranscriptService(
 		event: LaneWatchEvent | null,
 		context: Parameters<typeof state.publish>[0],
 	): void => {
-		state.state.snapshot = next as LaneTranscriptSnapshot;
+		// Provider messages may contain explicitly undefined optional fields.
+		// Copy into JSON form before Chord records replicated state operations.
+		state.state.snapshot = JSON.parse(JSON.stringify(next)) as LaneTranscriptSnapshot;
 		state.state.event = event;
 		state.publish(context);
 	};
@@ -58,11 +60,12 @@ export function createTranscriptService(
 
 	const onEvent = (event: HarnessEvent, context: Parameters<typeof state.publish>[0]): void => {
 		if (rebaseError !== undefined) throw rebaseError;
-		const forwarded = toLaneWatchEvent(event);
-		if (forwarded === undefined) return;
+		const projected = toLaneWatchEvent(event);
+		if (projected === undefined) return;
+		const forwarded = JSON.parse(JSON.stringify(projected)) as LaneWatchEvent;
 		const snapshot = state.state.snapshot;
 		if (snapshot === null) throw new Error("Transcript service is not active");
-		if (reduceLaneSnapshot(snapshot, event) === "rebase") scheduleRebase(context);
+		if (reduceLaneSnapshot(snapshot, forwarded) === "rebase") scheduleRebase(context);
 		state.state.event = forwarded;
 		state.publish(context);
 	};
