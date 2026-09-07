@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+node scripts/check-lockfile-commit.mjs
+
+printf '%s\n' 'Running formatting, linting, build, and type checks...'
+if ! pnpm check; then
+	printf '%s\n' 'Checks failed. Please fix the errors before committing.'
+	exit 1
+fi
+
+if ! git diff --cached --quiet -- packages/ livi-client/ livi-server/ package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json biome.json scripts/ .husky/; then
+	printf '%s\n' 'Running browser smoke check...'
+	if ! pnpm test:browser; then
+		printf '%s\n' 'Browser smoke check failed.'
+		exit 1
+	fi
+fi
+
+# pnpm check is read-only: preserve partial staging instead of restaging whole files.
+printf '%s\n' 'All pre-commit checks passed!'

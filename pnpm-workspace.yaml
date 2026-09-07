@@ -1,0 +1,8 @@
+packages:
+  - livi-client
+  - livi-server
+  - packages/*
+  - packages/session-backends/*
+
+onlyBuiltDependencies:
+  - esbuild

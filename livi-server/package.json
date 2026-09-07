@@ -1,0 +1,25 @@
+{
+  "name": "@livi/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "dev": "node --env-file-if-exists=../.env --import tsx --watch src/main.ts",
+    "start": "node --env-file-if-exists=../.env dist/main.js",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@livi/decorator-agent": "workspace:*",
+    "@earendil-works/chord": "workspace:*",
+    "@earendil-works/pi-agent-core": "workspace:*",
+    "@earendil-works/pi-server": "workspace:*",
+    "@earendil-works/pi-session-backend-sqlite-node": "workspace:*",
+    "ws": "8.18.3",
+    "@earendil-works/pi-ai": "workspace:*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-client": "workspace:*",
+    "@types/ws": "8.18.1"
+  }
+}

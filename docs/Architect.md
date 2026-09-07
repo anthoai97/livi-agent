@@ -1,73 +1,50 @@
 # Livi Agent Architecture
 
-Status: high-level proposal. Implementation details will be planned later using the PI project as a reference.
+Status: standalone chat prototype, issue #2. Room integration and 3D decoration actions remain future work.
 
-## Purpose
+## Runtime
 
-Build a room-decoration assistant for the existing 3D website. It understands the room, recommends catalog items, and helps users preview and apply decoration changes.
+A React + Vite client connects to one Node 24 HTTP server using PI's framed CBOR protocol over binary WebSocket messages. Node serves `/api/bootstrap`, `/health`, `/ws`, and the built frontend. Vite proxies those routes during development.
 
-## Stack
+The server owns a SQLite repository and one `DecoratorSession` runtime per open conversation. PI's server preserves logical server, session, and attachment routing. Chord handles typed service calls and replicated subscription snapshots and updates.
 
-| Layer | Component | Responsibility |
-| --- | --- | --- |
-| Website | Existing chat UI and 3D canvas | User interaction, previews, and rendering |
-| Decorator application | Local Decorator Agent | Decoration prompts, tools, sessions, and website integration |
-| Agent engine | Local Agent Core, adapted from PI | Model/tool loop, agent state, and execution events |
-| Model integration | PI AI | Model providers and response streaming |
-| Application services | Room, catalog, and storage services | Room state, products, layout checks, and saved designs |
+`DecoratorSession` wraps the local `AgentHarness` and its `main` lane. It owns the Livi prompt, Gemini model selection, durable prompt admission, background generation, aborts, transcript subscriptions, interrupted-operation recovery, and cleanup. Automatic compaction is disabled. Tools and active-tool lists are empty; no skills, extensions, MCP connections, or execution environment are registered. The durable core retains its upstream interfaces, while the application exposes only chat capabilities.
 
-First copy PI's Agent Core into a local `agent-core` package and simplify it to the execution features Livi needs. Then build `decorator-agent` on that local core, following PI Coding Agent's composition pattern: `DecoratorSession` wraps `Agent`.
+## Packages
 
-Keep the core independent of room decoration. PI AI remains a dependency for model integration.
-
-## Workspace structure
-
-```text
-livi-agent/
-├── docs/
-│   └── Architect.md
-└── packages/
-    ├── agent-core/           # Copied from PI, then simplified for Livi
-    └── decorator-agent/      # DecoratorSession, prompts, tools, and integration
-```
-
-Start with these two packages only. Decorator Agent owns room-specific contracts and integration code. The existing website and backend connect to it; separate client, contracts, and server packages are deferred.
-
-Dependency direction: `decorator-agent` → local `agent-core` → PI AI.
-
-## Build order
-
-1. Copy Agent Core from the PI project, retaining its license and attribution.
-2. Simplify the local core around the model/tool loop, state, streaming events, and cancellation.
-3. Build Decorator Agent on the local core and connect it to the existing room application.
-
-Choose the exact features to retain during implementation planning against PI's source.
-
-## Interaction flow
-
-1. The user sends a decoration request from the website.
-2. The chat server passes the request and room context to Decorator Agent.
-3. The local Agent Core runs model turns and invokes the available decorator tools.
-4. Application services retrieve products, validate changes, and create a preview.
-5. The browser renders the preview for user approval.
-6. The backend saves approved changes and synchronizes the canvas.
-
-## Decorator capabilities
-
-The initial tools cover reading room context, searching the catalog, proposing scene changes, validating layouts, undoing changes, and saving designs.
-
-The agent is limited to these application capabilities. The backend enforces room permissions and owns committed state; the browser renders that state and temporary previews.
-
-## PI references and later planning
-
-Use the local PI checkout as the implementation reference:
-
-| Reference | What to study |
+| Location | Responsibility |
 | --- | --- |
-| [PI Coding Agent](../../pi/packages/coding-agent/) | Application package organization and session composition |
-| [SDK factory](../../pi/packages/coding-agent/src/core/sdk.ts) | Constructing an Agent and wrapping it in an application session |
-| [AgentSession](../../pi/packages/coding-agent/src/core/agent-session.ts) | Conversation lifecycle, context management, and events |
-| [PI Agent Core](../../pi/packages/agent/) | Source for the local core and its simplification |
-| [PI AI](../../pi/packages/ai/) | Provider integration and streaming |
+| `livi-client` | React chat, reconnect and subscription hydration, Markdown rendering |
+| `livi-server` | HTTP, WebSocket adapter, stable server identity, SQLite ownership, shutdown |
+| `packages/agent` | Copied PI agent engine and durable harness |
+| `packages/decorator-agent` | DecoratorSession and browser-safe service contracts |
+| `packages/session-backends/sqlite-node` | Copied PI Node SQLite backend and migrations |
+| `packages/ai`, `packages/chord`, `packages/telemetry`, `packages/protocol` | Copied AI, service contracts, tracing, and wire protocol libraries |
+| `packages/client`, `packages/server` | Copied PI client connections and server routing |
 
-Detailed APIs, schemas, tool contracts, persistence, recovery, and deployment choices will be defined during implementation planning.
+Livi’s applications live at the root in `livi-client/` and `livi-server/`, with shared libraries under `packages/`. Copied packages retain upstream names and resolve each other through pnpm workspace links. Model catalogs are retained in source, and migrations are copied into build output. Normal builds work without the sibling PI checkout.
+
+## Services
+
+Browser code imports `@livi/decorator-agent/contracts`, which has no server runtime imports.
+
+| Service | Responsibility |
+| --- | --- |
+| `SessionDirectory` | Replicated conversation summaries |
+| `SessionManagement` | Create, attach, and detach conversations |
+| `AgentController` | Submit a message and abort by operation ID |
+| `Transcript` | Replicated PI transcript and execution status |
+
+## Conversation flow
+
+1. The browser loads public connection configuration and completes the PI handshake.
+2. It subscribes to the directory, creates or selects a conversation, then attaches and subscribes to its transcript.
+3. Submission durably admits the message and operation before returning the operation ID. Concurrent prompts on the same conversation are rejected.
+4. Background generation publishes transcript changes, updating the existing assistant message as text arrives.
+5. Disconnecting releases attachment subscriptions; accepted work continues in the server runtime.
+6. Reconnection creates fresh subscriptions. After a process interruption, reopening the conversation restores the transcript and resumes the existing operation once. It never resubmits the user message.
+7. Shutdown closes subscriptions, harnesses, and SQLite connections.
+
+## Defaults
+
+Client `127.0.0.1:5173`, server `127.0.0.1:3001`, no login. Model credentials remain server-only. `.data/sessions` contains one SQLite file per conversation, with stable server identity beside the directory. A single process owns each data directory. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
