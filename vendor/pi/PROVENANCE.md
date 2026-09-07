@@ -26,3 +26,5 @@ isolated dependency layout.
 composition. The wrapper exposes only prompt/abort and create/attach/detach;
 plugin, model-management, and coding capabilities are not exposed. Its MIT
 notice is retained in `packages/decorator-agent/LICENSE`.
+
+Detailed inventory and ongoing change history: [PI reuse tracking](../../docs/PI-Reuse.md).
