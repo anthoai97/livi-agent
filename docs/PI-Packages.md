@@ -1,6 +1,6 @@
 # PI Package Relationships
 
-Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provenance](../vendor/pi/PROVENANCE.md) for attribution and adaptations. See [reuse and change tracking](PI-Reuse.md) for the copied-file inventory, local differences, and change history. The sibling `../pi` checkout was an implementation reference, not a runtime or build dependency.
+Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provenance](../vendor/pi/PROVENANCE.md) for attribution and adaptations. See [reuse and local adaptations](PI-Reuse.md) for the copied-file inventory and local differences. The sibling `../pi` checkout was an implementation reference, not a runtime or build dependency.
 
 | PI package | Livi location | Direct PI dependencies |
 | --- | --- | --- |

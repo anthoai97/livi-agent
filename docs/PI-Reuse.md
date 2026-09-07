@@ -1,6 +1,4 @@
-# PI reuse and local change tracking
-
-Last audited: September 7, 2026, against Livi commit `0e2ba4f`.
+# PI reuse and local adaptations
 
 This document records what Livi copied from PI, what changed after copying, and which behavior belongs to Livi. Update it when changing copied packages, adapted services, or the upstream revision. See [package relationships](PI-Packages.md) for dependencies and [provenance](../vendor/pi/PROVENANCE.md) for attribution.
 
@@ -12,7 +10,7 @@ This document records what Livi copied from PI, what changed after copying, and 
 - License: MIT; notices retained under `vendor/pi/LICENSE`, `packages/agent/LICENSE`, `packages/session-backends/sqlite-node/LICENSE`, and `packages/decorator-agent/LICENSE`.
 - Original reference checkout: sibling `../pi`. Normal builds and runtime do not depend on it.
 
-At the audit above, every upstream tracked file in the eight copied package directories was retained. Their existing runtime source files were unchanged. Differences were package/build/test configuration, one test import, added license files, and generated provider data. The application-level transcript fix is outside these copied packages.
+The copies retain every upstream tracked file in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, one test import, added license files, and generated provider data. The application-level transcript fix is outside these copied packages.
 
 ## Copied packages
 
@@ -41,7 +39,6 @@ The copies include upstream tests, documentation, scripts, and supporting files.
 | AI dependencies | Added explicit `@smithy/types` dependency at `4.18.0` | Its existing source import needs a declared dependency under pnpm isolation |
 | AI catalogs | Added 39 provider JSON files and `.manifest.json` under `src/providers/data` | Retain model metadata with the source for offline builds |
 | Attribution | Added MIT license files to extracted agent and SQLite packages | Preserve upstream attribution |
-| Agent location | Renamed the initial `packages/agent-core` directory to `packages/agent` and updated references | Follow the requested local package layout |
 
 The catalogs were hydrated using the pinned revision's unchanged generator on September 7, 2026, from models.dev, NVIDIA NIM, OpenRouter, and Vercel AI Gateway. The generated manifest records their hashes. The upstream TypeScript provider catalog structure was retained.
 
@@ -75,21 +72,6 @@ The current default model is `gemini-3.5-flash-lite`, configurable through `GEMI
 
 The full copied agent core and other AI providers remain in source. Capabilities are restricted by Livi's wrapper and exposed services; the copied libraries have not been reduced to Gemini-only or chat-only implementations.
 
-## Change history
-
-All entries below are from September 7, 2026.
-
-| Livi commit | Change |
-| --- | --- |
-| `b065c8f` | Copied PI infrastructure, retained catalogs, and configured the workspace |
-| `ab1054e` | Added DecoratorSession, adapted services, SQLite/HTTP/WebSocket composition, and tests |
-| `5efa4d2` | Added React chat, browser verification, and setup/architecture documentation |
-| `7637b16` | Changed the default model to Gemini 3.5 Flash-Lite |
-| `e5b6509` | Fixed undefined provider fields at the Livi transcript boundary and added a regression test |
-| `0e2ba4f` | Renamed the local agent directory and updated workspace/test/documentation paths |
-
-Review stack: [foundation PR #3](https://github.com/anthoai97/livi-agent/pull/3), [server PR #4](https://github.com/anthoai97/livi-agent/pull/4), [chat/final changes PR #5](https://github.com/anthoai97/livi-agent/pull/5).
-
 ## Validation recorded
 
 - An isolated copy without previous dependencies/builds or a sibling PI checkout passed frozen offline installation, build, and typechecks.
@@ -101,14 +83,8 @@ Review stack: [foundation PR #3](https://github.com/anthoai97/livi-agent/pull/3)
 
 These are historical results, not a claim that every upstream package's test suite was run.
 
-## Maintaining this record
+## Keeping this document current
 
-For each future PI-related change:
+Update the package inventory and local differences when copied code or application composition changes. When upgrading PI, update the upstream revision here and in `vendor/pi/PROVENANCE.md`, and compare against that pinned revision. Record catalog sources and refresh the generated manifest when model data changes.
 
-1. Record the date, Livi commit/PR, affected package/files, and reason in the history.
-2. Identify whether it changes copied upstream code, generated data, adapted services, or Livi application composition.
-3. If changing the upstream revision, update both this baseline and `vendor/pi/PROVENANCE.md`; compare against the pinned Git revision rather than an uncommitted sibling checkout.
-4. Record catalog regeneration sources and refresh the generated manifest when model data changes.
-5. Record the relevant validation and any remaining unverified behavior.
-
-For source comparisons, map the upstream directories using the table above. Separate existing source changes from generated catalogs, license additions, and configuration changes. If copied runtime source is changed, update the audit statement near the beginning of this document.
+Keep this document focused on the current implementation and its differences from PI. Git and pull requests provide the working history.
