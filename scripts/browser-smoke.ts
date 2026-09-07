@@ -39,6 +39,7 @@ try {
 	await page.getByText("Warm lighting and a soft rug make a cozy room.", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
 	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+	await page.getByText("Warm lighting and a soft rug make a cozy room.", { exact: true }).waitFor({ state: "hidden" });
 	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Suggest a color for room two.");
 	await page.getByRole("button", { name: "Send", exact: true }).click();
 	await page.getByText("A blue accent wall suits the second room.", { exact: true }).waitFor();
