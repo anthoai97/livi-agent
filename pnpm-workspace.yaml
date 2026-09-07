@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+  - packages/session-backends/*
+  - vendor/pi/packages/*
+
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "paths": {
+      "@earendil-works/chord": [
+        "../../vendor/pi/packages/chord/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-telemetry": [
+        "../../vendor/pi/packages/telemetry/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-ai": [
+        "../../vendor/pi/packages/ai/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-ai/*": [
+        "../../vendor/pi/packages/ai/dist/*.d.ts",
+        "../../vendor/pi/packages/ai/dist/providers/*.d.ts"
+      ]
+    },
+    "rootDir": "./src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.d.ts",
+    "src/**/*.d.ts"
+  ]
+}

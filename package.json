@@ -1,0 +1,29 @@
+{
+  "name": "livi-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.17.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "check": "pnpm build && pnpm -r --if-present typecheck",
+    "test": "pnpm --filter \"@livi/*\" -r --if-present test",
+    "dev": "pnpm build && pnpm --parallel --filter @livi/server --filter @livi/client dev",
+    "test:session": "pnpm --filter @earendil-works/pi-session-backend-sqlite-node test",
+    "start": "pnpm --filter @livi/server start",
+    "typecheck": "pnpm build && pnpm -r --if-present typecheck",
+    "test:browser": "tsx scripts/browser-smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.5.2",
+    "@typescript/native-preview": "7.0.0-dev.20260120.1",
+    "playwright": "1.63.0",
+    "shx": "0.4.0",
+    "tsx": "4.22.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}
