@@ -7,10 +7,10 @@ This document records what Livi copied from PI, what changed after copying, and 
 - Repository: https://github.com/earendil-works/pi
 - Revision: `da840b6216578c2a571d0374ac6a2091a83f9d91`
 - Copied package version: `0.85.1`
-- License: MIT; notices retained in each copied package’s `LICENSE`, `packages/decorator-agent/LICENSE`, and [PI license](PI-LICENSE).
+- License: MIT; copyright and permission notice retained in [PI provenance](PI-Provenance.md#upstream-copyright-and-permission-notice).
 - Original reference checkout: sibling `../pi`. Normal builds and runtime do not depend on it.
 
-The copies retain every upstream tracked file in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, added license files, and generated provider data. The application-level transcript fix is outside these copied packages.
+The copies retain upstream runtime source, tests, and supporting files in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, consolidated attribution, and generated provider data. The application-level transcript fix is outside these copied packages.
 
 ## Copied packages
 
@@ -37,7 +37,7 @@ All copied packages live under `packages`. Livi’s applications live separately
 | AI build | Default `build` calls the existing `build:offline` | Avoid catalog downloads during normal builds |
 | AI dependencies | Added explicit `@smithy/types` dependency at `4.18.0` | Its existing source import needs a declared dependency under pnpm isolation |
 | AI catalogs | Added 39 provider JSON files and `.manifest.json` under `src/providers/data` | Retain model metadata with the source for offline builds |
-| Attribution | Added MIT license files to each copied package | Preserve upstream attribution |
+| Attribution | Consolidated the MIT notice in `docs/PI-Provenance.md`; removed separate license files | Preserve upstream attribution in one place |
 
 The catalogs were hydrated using the pinned revision's unchanged generator on September 7, 2026, from models.dev, NVIDIA NIM, OpenRouter, and Vercel AI Gateway. The generated manifest records their hashes. The upstream TypeScript provider catalog structure was retained.
 
