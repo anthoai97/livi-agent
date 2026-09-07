@@ -2,12 +2,12 @@
 
 Source: https://github.com/earendil-works/pi
 Revision: `da840b6216578c2a571d0374ac6a2091a83f9d91`
-License: MIT (see [LICENSE](LICENSE)).
+License: MIT (see [PI-LICENSE](PI-LICENSE)).
 
-`packages/{ai,chord,telemetry,protocol,client,server}` retain their upstream names.
-Upstream `packages/agent` lives at `../../packages/agent`; upstream
-`packages/session-backends/sqlite-node` lives at `../../packages/session-backends/sqlite-node`.
-Each extracted package also carries the upstream MIT license.
+`packages/{agent,ai,chord,telemetry,protocol,client,server}` and
+`packages/session-backends/sqlite-node` contain the copied PI libraries.
+Their npm package names remain the upstream names. The runnable Livi applications live at
+`livi-client/` and `livi-server/` in the repository root. Each copied package carries the upstream MIT license.
 
 Local integration changes use workspace dependencies and adjust build/test paths.
 The AI default build validates and copies checked-in provider data without network
@@ -27,4 +27,4 @@ composition. The wrapper exposes only prompt/abort and create/attach/detach;
 plugin, model-management, and coding capabilities are not exposed. Its MIT
 notice is retained in `packages/decorator-agent/LICENSE`.
 
-Detailed inventory and local adaptations: [PI reuse](../../docs/PI-Reuse.md).
+Detailed inventory and local adaptations: [PI reuse](PI-Reuse.md).

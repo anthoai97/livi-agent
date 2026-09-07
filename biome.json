@@ -25,10 +25,10 @@
 	},
 	"files": {
 		"includes": [
-			"packages/client/src/**/*.{ts,tsx}",
-			"packages/client/vite.config.ts",
-			"packages/server/src/**/*.ts",
-			"packages/server/test/**/*.ts",
+			"livi-client/src/**/*.{ts,tsx}",
+			"livi-client/vite.config.ts",
+			"livi-server/src/**/*.ts",
+			"livi-server/test/**/*.ts",
 			"packages/decorator-agent/src/**/*.ts",
 			"packages/decorator-agent/test/**/*.ts",
 			"scripts/**/*.{ts,mjs}",

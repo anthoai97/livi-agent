@@ -4,17 +4,17 @@
     "outDir": "./dist",
     "paths": {
       "@earendil-works/chord": [
-        "../../vendor/pi/packages/chord/dist/index.d.ts"
+        "../chord/dist/index.d.ts"
       ],
       "@earendil-works/pi-telemetry": [
-        "../../vendor/pi/packages/telemetry/dist/index.d.ts"
+        "../telemetry/dist/index.d.ts"
       ],
       "@earendil-works/pi-ai": [
-        "../../vendor/pi/packages/ai/dist/index.d.ts"
+        "../ai/dist/index.d.ts"
       ],
       "@earendil-works/pi-ai/*": [
-        "../../vendor/pi/packages/ai/dist/*.d.ts",
-        "../../vendor/pi/packages/ai/dist/providers/*.d.ts"
+        "../ai/dist/*.d.ts",
+        "../ai/dist/providers/*.d.ts"
       ]
     },
     "rootDir": "./src"

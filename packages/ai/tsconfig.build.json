@@ -1,13 +1,10 @@
 {
-  "extends": "../../../../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "paths": {
-      "@earendil-works/pi-protocol": [
-        "../protocol/dist/index.d.ts"
-      ]
-    }
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
   },
   "include": [
     "src/**/*.ts"

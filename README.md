@@ -2,6 +2,8 @@
 
 A standalone React chat app backed by one Node server, Gemini, PI's durable AgentHarness, and SQLite. Supports streamed answers, follow-up context, saved conversations, Stop, and recovery when an interrupted conversation reopens. No tools, skills, extensions, MCP, room integration, or 3D features are exposed.
 
+The applications live in `livi-client/` and `livi-server/`; shared core packages live in `packages/`.
+
 ## Setup
 
 Use Node 24 and pnpm 10.
@@ -34,7 +36,7 @@ pnpm test
 
 For browser verification, install Playwright Chromium (`pnpm exec playwright install chromium`), then run `pnpm test:browser`. Alternatively, set `CHROME_PATH` to an installed Chrome executable. This creates temporary conversations with an injected provider and writes a screenshot to `artifacts/chat-browser.png`.
 
-Tests inject a deterministic PI model provider and do not use Gemini credentials. The source includes copied model catalogs and SQLite migrations; normal installation and builds do not need `../pi` or catalog downloads. See [PI provenance](vendor/pi/PROVENANCE.md) for upstream attribution and local adaptations.
+Tests inject a deterministic PI model provider and do not use Gemini credentials. The source includes copied model catalogs and SQLite migrations; normal installation and builds do not need `../pi` or catalog downloads. See [PI provenance](docs/PI-Provenance.md) for upstream attribution and local adaptations.
 
 ## Persistence and lifecycle
 

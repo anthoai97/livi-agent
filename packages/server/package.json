@@ -1,25 +1,58 @@
 {
-  "name": "@livi/server",
-  "private": true,
+  "name": "@earendil-works/pi-server",
+  "version": "0.85.1",
+  "description": "experimental server package for pi",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    },
+    "./unix": {
+      "types": "./dist/transports/unix/index.d.ts",
+      "import": "./dist/transports/unix/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
-    "start": "node --env-file-if-exists=../../.env dist/main.js",
-    "test": "tsx --test test/*.test.ts"
+    "clean": "shx rm -rf dist",
+    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+    "build": "tsgo -p tsconfig.build.json",
+    "test": "vitest --run",
+    "typecheck": "tsgo -p tsconfig.test.json",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "pi",
+    "server"
+  ],
+  "author": "Earendil Works",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/earendil-works/pi.git",
+    "directory": "packages/server"
+  },
+  "engines": {
+    "node": ">=22.19.0"
   },
   "dependencies": {
-    "@livi/decorator-agent": "workspace:*",
     "@earendil-works/chord": "workspace:*",
     "@earendil-works/pi-agent-core": "workspace:*",
-    "@earendil-works/pi-server": "workspace:*",
-    "@earendil-works/pi-session-backend-sqlite-node": "workspace:*",
-    "ws": "8.18.3",
-    "@earendil-works/pi-ai": "workspace:*"
+    "@earendil-works/pi-protocol": "workspace:*"
   },
   "devDependencies": {
-    "@earendil-works/pi-client": "workspace:*",
-    "@types/ws": "8.18.1"
+    "shx": "0.4.0",
+    "vitest": "4.1.9"
   }
 }

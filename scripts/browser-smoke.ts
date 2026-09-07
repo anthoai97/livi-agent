@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
-import { startLiviServer } from "../packages/server/src/server.js";
-import { createModels, fauxAssistantMessage, fauxProvider } from "../vendor/pi/packages/ai/dist/index.js";
+import { startLiviServer } from "../livi-server/src/server.js";
+import { createModels, fauxAssistantMessage, fauxProvider } from "../packages/ai/dist/index.js";
 
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
 const faux = fauxProvider({

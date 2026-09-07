@@ -14,14 +14,15 @@ The server owns a SQLite repository and one `DecoratorSession` runtime per open 
 
 | Location | Responsibility |
 | --- | --- |
-| `packages/client` | React chat, reconnect and subscription hydration, Markdown rendering |
-| `packages/server` | HTTP, WebSocket adapter, stable server identity, SQLite ownership, shutdown |
+| `livi-client` | React chat, reconnect and subscription hydration, Markdown rendering |
+| `livi-server` | HTTP, WebSocket adapter, stable server identity, SQLite ownership, shutdown |
 | `packages/agent` | Copied PI agent engine and durable harness |
 | `packages/decorator-agent` | DecoratorSession and browser-safe service contracts |
 | `packages/session-backends/sqlite-node` | Copied PI Node SQLite backend and migrations |
-| `vendor/pi/packages` | Copied AI, Chord, telemetry, protocol, client and server libraries |
+| `packages/ai`, `packages/chord`, `packages/telemetry`, `packages/protocol` | Copied AI, service contracts, tracing, and wire protocol libraries |
+| `packages/client`, `packages/server` | Copied PI client connections and server routing |
 
-Copied packages retain upstream names and resolve each other through pnpm workspace links. Model catalogs are retained in source, and migrations are copied into build output. Normal builds work without the sibling PI checkout.
+Livi’s applications live at the root in `livi-client/` and `livi-server/`, with shared libraries under `packages/`. Copied packages retain upstream names and resolve each other through pnpm workspace links. Model catalogs are retained in source, and migrations are copied into build output. Normal builds work without the sibling PI checkout.
 
 ## Services
 

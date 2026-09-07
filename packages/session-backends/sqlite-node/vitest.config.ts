@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-const telemetryIndex = fileURLToPath(new URL("../../../vendor/pi/packages/telemetry/src/index.ts", import.meta.url));
-const aiIndex = fileURLToPath(new URL("../../../vendor/pi/packages/ai/src/index.ts", import.meta.url));
+const telemetryIndex = fileURLToPath(new URL("../../telemetry/src/index.ts", import.meta.url));
+const aiIndex = fileURLToPath(new URL("../../ai/src/index.ts", import.meta.url));
 const agentIndex = fileURLToPath(new URL("../../agent/src/index.ts", import.meta.url));
 const agentNode = fileURLToPath(new URL("../../agent/src/node.ts", import.meta.url));
 const agentSessionTesting = fileURLToPath(

@@ -1,16 +1,16 @@
 # PI reuse and local adaptations
 
-This document records what Livi copied from PI, what changed after copying, and which behavior belongs to Livi. Update it when changing copied packages, adapted services, or the upstream revision. See [package relationships](PI-Packages.md) for dependencies and [provenance](../vendor/pi/PROVENANCE.md) for attribution.
+This document records what Livi copied from PI, what changed after copying, and which behavior belongs to Livi. Update it when changing copied packages, adapted services, or the upstream revision. See [package relationships](PI-Packages.md) for dependencies and [provenance](PI-Provenance.md) for attribution.
 
 ## Upstream baseline
 
 - Repository: https://github.com/earendil-works/pi
 - Revision: `da840b6216578c2a571d0374ac6a2091a83f9d91`
 - Copied package version: `0.85.1`
-- License: MIT; notices retained under `vendor/pi/LICENSE`, `packages/agent/LICENSE`, `packages/session-backends/sqlite-node/LICENSE`, and `packages/decorator-agent/LICENSE`.
+- License: MIT; notices retained in each copied package’s `LICENSE`, `packages/decorator-agent/LICENSE`, and [PI license](PI-LICENSE).
 - Original reference checkout: sibling `../pi`. Normal builds and runtime do not depend on it.
 
-The copies retain every upstream tracked file in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, one test import, added license files, and generated provider data. The application-level transcript fix is outside these copied packages.
+The copies retain every upstream tracked file in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, added license files, and generated provider data. The application-level transcript fix is outside these copied packages.
 
 ## Copied packages
 
@@ -18,27 +18,26 @@ The copies retain every upstream tracked file in the eight package directories. 
 | --- | --- | --- |
 | `packages/agent` | `packages/agent` | AgentHarness, lanes, model/tool loop, durable operations and session interfaces |
 | `packages/session-backends/sqlite-node` | `packages/session-backends/sqlite-node` | SQLite persistence and migrations |
-| `packages/ai` | `vendor/pi/packages/ai` | Model registry, provider adapters and streaming |
-| `packages/chord` | `vendor/pi/packages/chord` | Service contracts and replicated state |
-| `packages/protocol` | `vendor/pi/packages/protocol` | Routed envelopes, CBOR encoding and framing |
-| `packages/client` | `vendor/pi/packages/client` | Client connections, service calls and subscriptions |
-| `packages/server` | `vendor/pi/packages/server` | Server/session/attachment routing and connection lifecycle |
-| `packages/telemetry` | `vendor/pi/packages/telemetry` | Tracing interfaces and utilities |
+| `packages/ai` | `packages/ai` | Model registry, provider adapters and streaming |
+| `packages/chord` | `packages/chord` | Service contracts and replicated state |
+| `packages/protocol` | `packages/protocol` | Routed envelopes, CBOR encoding and framing |
+| `packages/client` | `packages/client` | Client connections, service calls and subscriptions |
+| `packages/server` | `packages/server` | Server/session/attachment routing and connection lifecycle |
+| `packages/telemetry` | `packages/telemetry` | Tracing interfaces and utilities |
 
-The copies include upstream tests, documentation, scripts, and supporting files. They retain their upstream npm names. In particular, `packages/agent` is still named `@earendil-works/pi-agent-core`.
+All copied packages live under `packages`. Livi’s applications live separately at the root in `livi-client/` and `livi-server/`. The copies include upstream tests, documentation, scripts, and supporting files. They retain their upstream npm names. In particular, `packages/agent` is still named `@earendil-works/pi-agent-core`.
 
 ## Changes inside copied packages
 
 | Area | Local change | Reason |
 | --- | --- | --- |
 | Package manifests | PI dependencies use `workspace:*`; JSON formatting changed | Resolve copied packages locally through pnpm |
-| Build configuration | Updated inherited config and dependency paths | Match Livi's `packages` and `vendor/pi/packages` layout |
+| Build configuration | Updated inherited config and dependency paths | Match Livi's `packages` layout |
 | Test/benchmark configuration | Updated aliases and TypeScript paths | Run against the local copied sources |
-| Agent test | Updated the AI import in `test/harness/runtime/drive-retry-deferred.test.ts` | AI now lives under `vendor/pi/packages/ai` |
 | AI build | Default `build` calls the existing `build:offline` | Avoid catalog downloads during normal builds |
 | AI dependencies | Added explicit `@smithy/types` dependency at `4.18.0` | Its existing source import needs a declared dependency under pnpm isolation |
 | AI catalogs | Added 39 provider JSON files and `.manifest.json` under `src/providers/data` | Retain model metadata with the source for offline builds |
-| Attribution | Added MIT license files to extracted agent and SQLite packages | Preserve upstream attribution |
+| Attribution | Added MIT license files to each copied package | Preserve upstream attribution |
 
 The catalogs were hydrated using the pinned revision's unchanged generator on September 7, 2026, from models.dev, NVIDIA NIM, OpenRouter, and Vercel AI Gateway. The generated manifest records their hashes. The upstream TypeScript provider catalog structure was retained.
 
@@ -63,28 +62,15 @@ The transcript adapter also normalizes snapshots and forwarded events into JSON 
 | Location | Added behavior |
 | --- | --- |
 | `packages/decorator-agent/src/decorator-session.ts` | Wraps AgentHarness/main lane; owns Livi prompt, Gemini registration, durable admission, background generation, abort, recovery, subscriptions, and cleanup |
-| `packages/server` | Node HTTP plus WebSocket transport, bootstrap/health routes, built frontend serving, SQLite repository ownership, stable server identity, and shutdown |
-| `packages/client` | React/Vite chat UI, browser WebSocket adapter, streamed Markdown, Send/Stop, conversation selection, and reconnect hydration |
-| Root workspace/config | Node 24, TypeScript/ESM, pnpm workspace, lockfile, commands, environment example, and ignored secrets/runtime data |
-| Application tests and `scripts/browser-smoke.ts` | Deterministic provider tests, WebSocket/SQLite integration, crash recovery, and browser verification |
+| `livi-server` | Node HTTP plus WebSocket transport, bootstrap/health routes, built frontend serving, SQLite repository ownership, stable server identity, and shutdown |
+| `livi-client` | React/Vite chat UI, browser WebSocket adapter, streamed Markdown, Send/Stop, conversation selection, and reconnect hydration |
 
 The current default model is `gemini-3.5-flash-lite`, configurable through `GEMINI_MODEL`. The application registers only Google's provider, configures empty tools and active-tool lists, registers no skills/extensions/MCP/execution environment, and disables automatic compaction.
 
 The full copied agent core and other AI providers remain in source. Capabilities are restricted by Livi's wrapper and exposed services; the copied libraries have not been reduced to Gemini-only or chat-only implementations.
 
-## Validation recorded
-
-- An isolated copy without previous dependencies/builds or a sibling PI checkout passed frozen offline installation, build, and typechecks.
-- After the agent directory rename, build/typechecks, 7 application tests, and 105 SQLite tests passed.
-- Application coverage includes streaming, follow-up context, cancellation, provider failure, concurrent prompt rejection, conversation isolation, subscription cleanup, reconnect hydration, and SIGKILL recovery without duplicate user input.
-- The serialization regression reproduced the reported protocol failure before the fix and passed afterward, including signature preservation.
-- Browser verification covered two chats, switching, Stop, reload, and restart recovery.
-- Live Gemini 3.5 Flash-Lite verification passed for a response, reload hydration, and follow-up without protocol errors.
-
-These are historical results, not a claim that every upstream package's test suite was run.
-
 ## Keeping this document current
 
-Update the package inventory and local differences when copied code or application composition changes. When upgrading PI, update the upstream revision here and in `vendor/pi/PROVENANCE.md`, and compare against that pinned revision. Record catalog sources and refresh the generated manifest when model data changes.
+Update the package inventory and local differences when copied code or application composition changes. When upgrading PI, update the upstream revision here and in [PI provenance](PI-Provenance.md), and compare against that pinned revision. Record catalog sources and refresh the generated manifest when model data changes.
 
 Keep this document focused on the current implementation and its differences from PI. Git and pull requests provide the working history.

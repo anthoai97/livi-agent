@@ -1,19 +1,19 @@
 # PI Package Relationships
 
-Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provenance](../vendor/pi/PROVENANCE.md) for attribution and adaptations. See [reuse and local adaptations](PI-Reuse.md) for the copied-file inventory and local differences. The sibling `../pi` checkout was an implementation reference, not a runtime or build dependency.
+Livi copies PI revision `da840b6216578c2a571d0374ac6a2091a83f9d91`. See [provenance](PI-Provenance.md) for attribution and adaptations. See [reuse and local adaptations](PI-Reuse.md) for the copied-file inventory and local differences. The sibling `../pi` checkout was an implementation reference, not a runtime or build dependency.
 
 | PI package | Livi location | Direct PI dependencies |
 | --- | --- | --- |
 | `agent` | `packages/agent` | AI, Chord, telemetry |
-| `ai` | `vendor/pi/packages/ai` | telemetry |
-| `chord` | `vendor/pi/packages/chord` | None |
-| `telemetry` | `vendor/pi/packages/telemetry` | None |
-| `protocol` | `vendor/pi/packages/protocol` | Chord |
-| `client` | `vendor/pi/packages/client` | protocol, Chord |
-| `server` | `vendor/pi/packages/server` | agent, protocol, Chord |
+| `ai` | `packages/ai` | telemetry |
+| `chord` | `packages/chord` | None |
+| `telemetry` | `packages/telemetry` | None |
+| `protocol` | `packages/protocol` | Chord |
+| `client` | `packages/client` | protocol, Chord |
+| `server` | `packages/server` | agent, protocol, Chord |
 | `session-backends/sqlite-node` | `packages/session-backends/sqlite-node` | agent, AI |
 
-“None” refers to PI dependencies; packages can have external dependencies. Copied packages retain their upstream package names and use workspace links.
+“None” refers to PI dependencies; packages can have external dependencies. Livi’s applications live at the root in `livi-client/` and `livi-server/`, with shared libraries under `packages/`. Copied packages retain their upstream package names and use workspace links.
 
 The execution chain is **DecoratorSession → AgentHarness/main lane → PI AI → Gemini**. The application registers only the Google provider and no tools. Core interfaces remain available for durable SQLite persistence and PI routing, while browser-facing contracts restrict application capabilities to chat.
 
