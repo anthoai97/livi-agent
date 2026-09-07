@@ -10,7 +10,7 @@ This document records what Livi copied from PI, what changed after copying, and 
 - License: MIT; copyright and permission notice retained in [PI provenance](PI-Provenance.md#upstream-copyright-and-permission-notice).
 - Original reference checkout: sibling `../pi`. Normal builds and runtime do not depend on it.
 
-The copies retain upstream runtime source, tests, and supporting files in the eight package directories. Their existing runtime source files were unchanged. Differences were package/build/test configuration, consolidated attribution, and generated provider data. The application-level transcript fix is outside these copied packages.
+The copies retain upstream runtime source, tests, and supporting files in the eight package directories. Their existing runtime source files were unchanged. Differences include package/build/test configuration, consolidated attribution, removed changelogs, and generated provider data. The application-level transcript fix is outside these copied packages.
 
 ## Copied packages
 
@@ -38,6 +38,7 @@ All copied packages live under `packages`. Livi’s applications live separately
 | AI dependencies | Added explicit `@smithy/types` dependency at `4.18.0` | Its existing source import needs a declared dependency under pnpm isolation |
 | AI catalogs | Added 39 provider JSON files and `.manifest.json` under `src/providers/data` | Retain model metadata with the source for offline builds |
 | Attribution | Consolidated the MIT notice in `docs/PI-Provenance.md`; removed separate license files | Preserve upstream attribution in one place |
+| Package documentation | Removed copied changelog files, their package manifest entries, and AI README instructions for writing changelog entries | Keep upstream release history out of the local packages |
 
 The catalogs were hydrated using the pinned revision's unchanged generator on September 7, 2026, from models.dev, NVIDIA NIM, OpenRouter, and Vercel AI Gateway. The generated manifest records their hashes. The upstream TypeScript provider catalog structure was retained.
 
