@@ -1,6 +1,6 @@
 # Studio agent implementation plan
 
-Status: proposed implementation plan; no feature code implemented by this document.
+Status: implementation delivered in four coherent PR layers (contracts; broker; durable runtime/tools/reversal; UI/smoke/docs). Agent verification uses explicitly synthetic JSON and simulated Studio saves. Database-export acceptance and joint real Studio acceptance remain pending.
 
 Agent issue: [livi-agent #7](https://github.com/anthoai97/livi-agent/issues/7).
 Companion: [web-pipeline #36](https://github.com/Livinit-ai/web-pipeline/issues/36).
@@ -38,18 +38,18 @@ Two constraints affect the implementation:
 
 **Purpose:** let both repositories implement against one explicit interface.
 
-- [ ] Add a focused browser-safe Studio contract module under `packages/decorator-agent/src/services/` and export it through `contracts.ts`.
-- [ ] Separate stable Studio/tab identity, design identity, conversation binding, and the current connection generation. A catalog product ID must not substitute for a placed object ID.
-- [ ] Define a room snapshot with design/revision, geometry/openings, object IDs, identifying names/categories, dimensions, position/rotation/scale, and selected object IDs. Avoid model files, binary data, and unrelated catalog payloads.
-- [ ] Give snapshots and selection updates a sequence within the current registration so late updates cannot replace newer context. Selection changes do not necessarily advance the saved design revision.
-- [ ] Fix coordinate units, axis directions, room origin, Euler rotation order, and angle units with the Studio implementer. Verify against actual Studio conversion/rendering code; tuple types alone do not establish these conventions. Document one movement and one rotation example as contract fixtures.
-- [ ] Use absolute target position/rotation in mutation commands. Relative language is resolved against a known snapshot before dispatch; replay must not add a delta again.
-- [ ] Define a command envelope containing stable command ID, conversation/design/tab binding, expected revision, action, placed object ID, and action-specific arguments. Generate routing and command IDs in application code, never in model arguments.
-- [ ] Define results with command identity, status, canonical saved revision, updated scene, and authoritative before/after transforms for successful moves/rotations. Distinguish rejected, still pending, saved, and unknown outcomes.
-- [ ] Keep a command's saved result immutable and separate from current room context. A delayed acknowledgement or status lookup can describe an older revision; it must settle the journal without replacing a newer scene or selection. Apply registration/sequence checks to every context-bearing response, and fetch fresh saved context when ordering cannot be established.
-- [ ] Define mailbox requests for fresh saved context, executing a mutation, and checking a previous command's status. Read requests also need correlation IDs and bounded waits; they are not mutation tools.
-- [ ] Define structured errors for unavailable Studio, wrong binding, invalid target/arguments, stale revision, save rejection, and uncertain outcome.
-- [ ] Provide a consumable build of the browser-safe contracts and required transport dependencies to `web-pipeline`. Start with versioned local package tarballs and verify an isolated consumer build; the sibling repository cannot resolve this workspace's `workspace:*` dependencies by itself. Do not copy independent contract definitions between repositories.
+- [x] Add a focused browser-safe Studio contract module under `packages/decorator-agent/src/services/` and export it through `contracts.ts`.
+- [x] Separate stable Studio/tab identity, design identity, conversation binding, and the current connection generation. A catalog product ID must not substitute for a placed object ID.
+- [x] Define a room snapshot with design/revision, geometry/openings, object IDs, identifying names/categories, dimensions, position/rotation/scale, and selected object IDs. Avoid model files, binary data, and unrelated catalog payloads.
+- [x] Give snapshots and selection updates a sequence within the current registration so late updates cannot replace newer context. Selection changes do not necessarily advance the saved design revision.
+- [ ] Obtain companion implementer agreement on coordinate and durable-status semantics. Source verification is complete: metres, front-left manifest origin, +X right/+Y back/+Z up, radians and yaw only; full Euler support is deliberately excluded. Fix coordinate units, axis directions, room origin, Euler rotation order, and angle units with the Studio implementer. Verify against actual Studio conversion/rendering code; tuple types alone do not establish these conventions. Document one movement and one rotation example as contract fixtures.
+- [x] Use absolute target position/rotation in mutation commands. Relative language is resolved against a known snapshot before dispatch; replay must not add a delta again.
+- [x] Define a command envelope containing stable command ID, conversation/design/tab binding, expected revision, action, placed object ID, and action-specific arguments. Generate routing and command IDs in application code, never in model arguments.
+- [x] Define results with command identity, status, canonical saved revision, updated scene, and authoritative before/after transforms for successful moves/rotations. Distinguish rejected, still pending, saved, and unknown outcomes.
+- [x] Keep a command's saved result immutable and separate from current room context. A delayed acknowledgement or status lookup can describe an older revision; it must settle the journal without replacing a newer scene or selection. Apply registration/sequence checks to every context-bearing response, and fetch fresh saved context when ordering cannot be established.
+- [x] Define mailbox requests for fresh saved context, executing a mutation, and checking a previous command's status. Read requests also need correlation IDs and bounded waits; they are not mutation tools.
+- [x] Define structured errors for unavailable Studio, wrong binding, invalid target/arguments, stale revision, save rejection, and uncertain outcome.
+- [x] Provide a consumable build of the browser-safe contracts and required transport dependencies to `web-pipeline`. Start with versioned local package tarballs and verify an isolated consumer build; the sibling repository cannot resolve this workspace's `workspace:*` dependencies by itself. Do not copy independent contract definitions between repositories.
 
 **Done when:** a small fake Studio consumer can import the contracts outside this workspace, and both issues agree on request/result fixtures, coordinate conventions, and durable status semantics. Whether the existing Studio backend can look up/deduplicate operation IDs must be verified in the companion issue; it is not established by frontend types alone.
 
@@ -57,16 +57,16 @@ Two constraints affect the implementation:
 
 **Purpose:** establish correct routing before adding model-driven mutations.
 
-- [ ] Add one application-level Studio broker under `packages/decorator-agent/src/`. Construct it in `startLiviServer` and inject it into `createServerServices` and `DecoratorSession.create`.
-- [ ] Add a server-scoped Studio service: registration, context publication, result reporting, and a private replicated request mailbox. Keep the mailbox private to its physical connection's provider.
-- [ ] Bind registration authority to the provider closure. Do not trust a supplied tab/connection ID to acknowledge another connection's commands. Reject duplicate active tab registrations or explicitly retire the old generation.
-- [ ] Expose connected Studio summaries for the chat picker and a session-scoped service for binding/unbinding a conversation and subscribing to its Studio status.
-- [ ] Initially permit one controlling conversation per design and one in-flight agent mutation per design. Apply this across tabs, not just within an agent lane. Manual changes remain protected by Studio's revision check.
-- [ ] Persist the chosen design/tab association using session values. Keep sockets and connection generations in memory. Reopening a conversation remembers its target but does not invent a live connection.
-- [ ] Persist the target binding, including an unattached state, under an application-generated operation ID before admitting the prompt with that ID, serializing admission against binding changes. Missing admission binding on recovery must block room actions rather than adopting the conversation's current binding. Refuse target reassignment while it has an unresolved mutation; never let a delayed tool call target a newly selected room. Discard unused binding records if admission fails.
-- [ ] Extend provider cleanup in place to mark its Studio offline, remove subscriptions, and settle bounded read waits. An old connection's cleanup must not remove a newer registration.
-- [ ] On reconnect, require registration, new subscriptions, a fresh saved scene, and outstanding-command reconciliation before marking the design ready.
-- [ ] Add explicit configured Studio origins to the server's existing WebSocket origin check. Support the same allowed origins on `/api/bootstrap` if Studio fetches it directly. Wire configuration through `main.ts` and `.env.example`; preserve existing same-origin chat behavior.
+- [x] Add one application-level Studio broker under `packages/decorator-agent/src/`. Construct it in `startLiviServer` and inject it into `createServerServices` and `DecoratorSession.create`.
+- [x] Add a server-scoped Studio service: registration, context publication, result reporting, and a private replicated request mailbox. Keep the mailbox private to its physical connection's provider.
+- [x] Bind registration authority to the provider closure. Do not trust a supplied tab/connection ID to acknowledge another connection's commands. Reject duplicate active tab registrations or explicitly retire the old generation.
+- [x] Expose connected Studio summaries for the chat picker and a session-scoped service for binding/unbinding a conversation and subscribing to its Studio status.
+- [x] Initially permit one controlling conversation per design and one in-flight agent mutation per design. Apply this across tabs, not just within an agent lane. Manual changes remain protected by Studio's revision check.
+- [x] Persist the chosen design/tab association using session values. Keep sockets and connection generations in memory. Reopening a conversation remembers its target but does not invent a live connection.
+- [x] Persist the target binding, including an unattached state, under an application-generated operation ID before admitting the prompt with that ID, serializing admission against binding changes. Missing admission binding on recovery must block room actions rather than adopting the conversation's current binding. Refuse target reassignment while it has an unresolved mutation; never let a delayed tool call target a newly selected room. Discard unused binding records if admission fails.
+- [x] Extend provider cleanup in place to mark its Studio offline, remove subscriptions, and settle bounded read waits. An old connection's cleanup must not remove a newer registration.
+- [x] On reconnect, require registration, new subscriptions, a fresh saved scene, and outstanding-command reconciliation before marking the design ready.
+- [x] Add explicit configured Studio origins to the server's existing WebSocket origin check. Support the same allowed origins on `/api/bootstrap` if Studio fetches it directly. Wire configuration through `main.ts` and `.env.example`; preserve existing same-origin chat behavior.
 
 **Done when:** two fake Studio tabs can connect, chat can choose one explicitly, context updates reach only the correct conversation, and disconnect/reconnect/design switching cannot redirect requests. No changes to generic PI protocol or server routing packages should be necessary.
 
@@ -74,16 +74,16 @@ Two constraints affect the implementation:
 
 **Purpose:** make external edits recoverable before allowing the model to issue them.
 
-- [ ] Add a focused command journal using existing `Session` values, for example namespaces `livi.studio.binding` and `livi.studio.command`. Keep actual before/after transforms in these records; do not introduce a second history store initially.
-- [ ] Use the pair of session ID and harness `invocationId` as the logical command identity. If Studio requires UUID operation IDs, agree a deterministic mapping in Step 1. Store operation/turn identity for correlation.
-- [ ] Persist the exact command, binding, observed before transform, and expected revision before making it visible to Studio. A recovered command must retain the original target and payload.
-- [ ] Persist the planning snapshot before sending the model request, including the saved scene, binding, selection, and revision, keyed to the operation and generation/turn. Tool invocation identity does not exist at planning time. Recovery must load that snapshot even if the assistant response was saved before the first command record was created; missing planning evidence must prevent dispatch and require explicit replanning.
-- [ ] Use `Session.mutate` to read a record and atomically commit its transition with the existing value-write helpers. Release the mutation lock before any network wait; do not call public session writers from inside a mutation callback.
-- [ ] Persist an uncertain state before publishing the mutation to the mailbox. A crash between this write and actual delivery is reconciled conservatively.
-- [ ] Persist the authoritative saved result before resolving the tool successfully. Duplicate identical results return the existing record; conflicting results require reconciliation rather than replacing a committed result.
-- [ ] Restore bindings and unresolved records before starting recovered tool drives. On server startup, inventory stored sessions through the repository ownership path before allowing new design mutations, including records from conversations the user has not reopened. Do not open a second writer for a session already owned by a runtime.
-- [ ] Reconcile on session activation and Studio reconnect independently of harness replay. Cancelled operations may never invoke their interrupted tool again.
-- [ ] Block subsequent agent mutations for a design while a previous outcome is unknown. Allow context/status reads and normal conversation.
+- [x] Add a focused command journal using existing `Session` values, for example namespaces `livi.studio.binding` and `livi.studio.command`. Keep actual before/after transforms in these records; do not introduce a second history store initially.
+- [x] Use the pair of session ID and harness `invocationId` as the logical command identity. If Studio requires UUID operation IDs, agree a deterministic mapping in Step 1. Store operation/turn identity for correlation.
+- [x] Persist the exact command, binding, observed before transform, and expected revision before making it visible to Studio. A recovered command must retain the original target and payload.
+- [x] Persist the planning snapshot before sending the model request, including the saved scene, binding, selection, and revision, keyed to the operation and generation/turn. Tool invocation identity does not exist at planning time. Recovery must load that snapshot even if the assistant response was saved before the first command record was created; missing planning evidence must prevent dispatch and require explicit replanning.
+- [x] Use `Session.mutate` to read a record and atomically commit its transition with the existing value-write helpers. Release the mutation lock before any network wait; do not call public session writers from inside a mutation callback.
+- [x] Persist an uncertain state before publishing the mutation to the mailbox. A crash between this write and actual delivery is reconciled conservatively.
+- [x] Persist the authoritative saved result before resolving the tool successfully. Duplicate identical results return the existing record; conflicting results require reconciliation rather than replacing a committed result.
+- [x] Restore bindings and unresolved records before starting recovered tool drives. On server startup, inventory stored sessions through the repository ownership path before allowing new design mutations, including records from conversations the user has not reopened. Do not open a second writer for a session already owned by a runtime.
+- [x] Reconcile on session activation and Studio reconnect independently of harness replay. Cancelled operations may never invoke their interrupted tool again.
+- [x] Block subsequent agent mutations for a design while a previous outcome is unknown. Allow context/status reads and normal conversation.
 
 Use these application states:
 
@@ -105,11 +105,11 @@ Stop prevents commands that have not been published. After publication, it stops
 
 **Purpose:** connect natural-language intent to the proven command path.
 
-- [ ] Extend `DecoratorSession.create` in place with the Studio dependency and typed per-turn context. Use the harness's existing tool-context provider and system-prompt callback to supply room data to the model. No separate read-room model tool is required initially.
-- [ ] Account for the harness resolving `toolContext` separately for the system prompt and tool execution, including replay. Both must use the same durable planning snapshot for that generation/turn; fetching current context again inside the tool-context provider must not change the revision attached to existing model arguments. Refresh for the next model generation after a saved result or stale rejection, including within the same admitted operation.
-- [ ] Request a fresh saved snapshot before planning a decoration action. Capture the target and selection used for that action; do not silently retarget if selection changes while the model is thinking.
-- [ ] Include a compact room/object summary and relevant committed action records. Treat object labels and room descriptions as data, not instructions. If context is missing or saving fails, return an unavailable state instead of using an old snapshot as current.
-- [ ] Add three typed tool definitions in one focused tools module. Start with one object per invocation; the agent can issue several sequentially for an explicit multi-object request.
+- [x] Extend `DecoratorSession.create` in place with the Studio dependency and typed per-turn context. Use the harness's existing tool-context provider and system-prompt callback to supply room data to the model. No separate read-room model tool is required initially.
+- [x] Account for the harness resolving `toolContext` separately for the system prompt and tool execution, including replay. Both must use the same durable planning snapshot for that generation/turn; fetching current context again inside the tool-context provider must not change the revision attached to existing model arguments. Refresh for the next model generation after a saved result or stale rejection, including within the same admitted operation.
+- [x] Request a fresh saved snapshot before planning a decoration action. Capture the target and selection used for that action; do not silently retarget if selection changes while the model is thinking.
+- [x] Include a compact room/object summary and relevant committed action records. Treat object labels and room descriptions as data, not instructions. If context is missing or saving fails, return an unavailable state instead of using an old snapshot as current.
+- [x] Add three typed tool definitions in one focused tools module. Start with one object per invocation; the agent can issue several sequentially for an explicit multi-object request.
 
 | Proposed tool | Model arguments | Preserved fields |
 | --- | --- | --- |
@@ -117,12 +117,12 @@ Stop prevents commands that have not been published. After publication, it stops
 | `rotate_object` | Object instance ID and absolute rotation | Position, scale, identity, and materials |
 | `remove_object` | Object instance ID | All other objects |
 
-- [ ] Validate finite coordinates/angles, exact instance identity, supported action shape, and the operation's pinned binding. Reuse Studio's existing placement restrictions; do not add a layout solver or claim collision validation the adapter does not supply.
-- [ ] Pass the revision used to plan the action. If the room changes, return stale context and refresh/replan explicitly; do not stamp a fresh revision onto old model arguments.
-- [ ] Serialize mutations through the broker. If a model emits multiple calls planned against one revision, reject/replan later stale calls rather than silently rebasing them.
-- [ ] Register only these three mutation tools and explicitly set the main lane's allowlist with `lane.setActiveTools(...)` for new and reopened conversations before starting recovered drives. Constructor options only seed new lanes; existing chats retain their stored empty allowlist. Preserve configurations already captured by in-flight generations/batches; the new allowlist applies at subsequent planning boundaries. Use current installed TypeBox/harness APIs when implementing; keep shell/filesystem capabilities unavailable.
-- [ ] Update the prompt: use selection when unambiguous, ask about unclear targets/directions/distances, describe errors accurately, and claim a change only from a committed tool result. Define room-relative directions; do not infer camera-relative "left" without camera context.
-- [ ] Update existing zero-tool assertions to the explicit three-tool allowlist while preserving unavailable-tool rejection coverage and ordinary chat behavior.
+- [x] Validate finite coordinates/angles, exact instance identity, supported action shape, and the operation's pinned binding. Reuse Studio's existing placement restrictions; do not add a layout solver or claim collision validation the adapter does not supply.
+- [x] Pass the revision used to plan the action. If the room changes, return stale context and refresh/replan explicitly; do not stamp a fresh revision onto old model arguments.
+- [x] Serialize mutations through the broker. If a model emits multiple calls planned against one revision, reject/replan later stale calls rather than silently rebasing them.
+- [x] Register only these three mutation tools and explicitly set the main lane's allowlist with `lane.setActiveTools(...)` for new and reopened conversations before starting recovered drives. Constructor options only seed new lanes; existing chats retain their stored empty allowlist. Preserve configurations already captured by in-flight generations/batches; the new allowlist applies at subsequent planning boundaries. Use current installed TypeBox/harness APIs when implementing; keep shell/filesystem capabilities unavailable.
+- [x] Update the prompt: use selection when unambiguous, ask about unclear targets/directions/distances, describe errors accurately, and claim a change only from a committed tool result. Define room-relative directions; do not infer camera-relative "left" without camera context.
+- [x] Update existing zero-tool assertions to the explicit three-tool allowlist while preserving unavailable-tool rejection coverage and ordinary chat behavior.
 
 **Done when:** an injected model can move, rotate, and remove the intended object through the fake Studio; invalid/ambiguous/stale requests cannot produce an unintended mutation. Each subsequent turn receives the saved result of the previous action.
 
@@ -130,12 +130,12 @@ Stop prevents commands that have not been published. After publication, it stops
 
 **Purpose:** support "move it back" and "undo that rotation" without implementing an undo stack.
 
-- [ ] Read committed records scoped to the conversation and design. Resolve an explicit referenced action or the latest relevant action; clarify ambiguous references.
-- [ ] For plain "undo that", inspect the latest action rather than skipping a removal to find an older reversible move. Explain that restoration after removal is unavailable.
-- [ ] Refresh the object and compare its identity and current transform with the recorded authoritative after state. Agree numeric/angle normalization tolerances with the adapter. A newer revision caused only by unrelated objects does not by itself prevent reversal.
-- [ ] Supply a checked reversal reference to the existing move/rotate execution path, so application code derives the previous value from the journal and enforces the precondition. Do not depend on the model copying coordinates from chat correctly. This can be an optional original-command reference in the same tool schema, mutually exclusive with an ordinary target transform.
-- [ ] Issue the reversal as a new normal command with a new invocation identity and current expected revision. Record its before/after transform and optional original-command reference. Do not reuse the original command ID.
-- [ ] If the object was removed, replaced, or manually changed, clarify instead of silently overwriting it. Studio's revision check closes the race between validation and saving.
+- [x] Read committed records scoped to the conversation and design. Resolve an explicit referenced action or the latest relevant action; clarify ambiguous references.
+- [x] For plain "undo that", inspect the latest action rather than skipping a removal to find an older reversible move. Explain that restoration after removal is unavailable.
+- [x] Refresh the object and compare its identity and current transform with the recorded authoritative after state. Agree numeric/angle normalization tolerances with the adapter. A newer revision caused only by unrelated objects does not by itself prevent reversal.
+- [x] Supply a checked reversal reference to the existing move/rotate execution path, so application code derives the previous value from the journal and enforces the precondition. Do not depend on the model copying coordinates from chat correctly. This can be an optional original-command reference in the same tool schema, mutually exclusive with an ordinary target transform.
+- [x] Issue the reversal as a new normal command with a new invocation identity and current expected revision. Record its before/after transform and optional original-command reference. Do not reuse the original command ID.
+- [x] If the object was removed, replaced, or manually changed, clarify instead of silently overwriting it. Studio's revision check closes the race between validation and saving.
 
 **Done when:** moves and rotations can be reversed after reopening the session; intervening changes are detected; removal reversal never dispatches a mutation. No manual-edit undo stack, redo feature, or new undo tool is added.
 
@@ -143,12 +143,14 @@ Stop prevents commands that have not been published. After publication, it stops
 
 **Purpose:** make the connection and actual saved outcome understandable in `livi-client`.
 
-- [ ] Extend the existing subscription setup in `main.tsx` to show connected Studios, the conversation's selected design, selected object summary, and offline/reconciling/ready state.
-- [ ] Add a small attach/change/disconnect control. Keep conversation selection separate from Studio selection, and disable binding changes while a mutation is unresolved.
-- [ ] Show action progress such as reading room, moving object, waiting for save, and checking previous result. Render saved/rejected/unknown outcomes from structured service state rather than inferring them from assistant prose.
-- [ ] Keep tool internals and raw room JSON out of normal messages. Preserve user and assistant text rendering and display concise action results.
-- [ ] Hydrate binding and command status after reconnect without resubmitting prompts or commands. Show a late saved outcome even if Stop ended the original model response.
-- [ ] Keep general chat available without an attached Studio; explain that room actions require a connection.
+- [x] Extend the existing subscription setup in `main.tsx` to show connected Studios, the conversation's selected design, selected object summary, and offline/reconciling/ready state.
+- [x] Add a small attach/change/disconnect control. Keep conversation selection separate from Studio selection, and disable binding changes while a mutation is unresolved.
+- [x] Show action progress such as reading room, moving object, waiting for save, and checking previous result. Render saved/rejected/unknown outcomes from structured service state rather than inferring them from assistant prose.
+- [x] Keep tool internals and raw room JSON out of normal messages. Preserve user and assistant text rendering and display concise action results.
+- [x] Hydrate binding and command status after reconnect without resubmitting prompts or commands. Show a late saved outcome even if Stop ended the original model response.
+- [x] Keep general chat available without an attached Studio; explain that room actions require a connection.
+
+**Verification:** final rebuilt client passed `pnpm test:browser`: explicit attachment and selection, structured saves, hidden tool JSON, unresolved target lock, Stop, offline/reconnect hydration, and late saved outcomes without command resubmission. General chat, conversation switching, and interrupted-server recovery also passed. Desktop/mobile screenshots are written under `artifacts/`.
 
 **Done when:** reconnect and cancellation states are visible and accurate, and a user can see which design a chat action will affect before sending it.
 
@@ -158,12 +160,14 @@ Stop prevents commands that have not been published. After publication, it stops
 
 - [ ] Take JSON exported from the user's database query as the room fixture. The exact query/export is an input still to be supplied; do not invent database tables or assume the illustrative snapshot is the database schema.
 - [ ] Map that export into the shared room snapshot with explicit field mappings. Preserve instance IDs, transforms, geometry, and revision. Check units and rotation conventions against the source contract. Missing required values should produce a fixture error rather than invented defaults.
-- [ ] Store selected object IDs in each smoke scenario; selection is transient UI context and may not exist in the database export.
-- [ ] Add a small headless adapter that connects through the real server services, publishes the fixture, receives commands, applies only move/rotate/remove to a local JSON copy, and returns simulated saved revisions/results. No browser, Three.js, asset downloads, or writes to the source database are needed.
-- [ ] Use a temporary local state/result file for the adapter's command deduplication and restart scenarios. Label its acknowledgements as simulated persistence in the smoke report; they do not establish real Studio backend behavior.
-- [ ] Add a script such as `scripts/studio-json-smoke.ts` with a proposed `pnpm smoke:studio --room <export.json> --cases <scenarios.json>` entry point. This command does not exist yet. Produce machine-readable results containing each prompt, emitted commands, before/after JSON, revision, tool result, and assertions.
-- [ ] Define expected object IDs, action types, changed fields, and unchanged fields independently in scenario files. Do not use the agent's own output to generate the expected answer.
-- [ ] Support a real-model smoke mode for checking natural-language requests against the fixture. Assert structured behavior and numeric tolerances, not exact assistant prose. Retain injected-model tests for repeatable routing, failure, and recovery checks; those alone do not prove natural-language understanding.
+- [x] Store selected object IDs in each smoke scenario; selection is transient UI context and may not exist in the database export.
+- [x] Add a small headless adapter that connects through the real server services, publishes the fixture, receives commands, applies only move/rotate/remove to a local JSON copy, and returns simulated saved revisions/results. No browser, Three.js, asset downloads, or writes to the source database are needed.
+- [x] Use a temporary local state/result file for the adapter's command deduplication and restart scenarios. Label its acknowledgements as simulated persistence in the smoke report; they do not establish real Studio backend behavior.
+- [x] Add `scripts/studio-json-smoke.ts` with `pnpm smoke:studio --room <mapped-export.json> --cases <scenarios.json> --mode injected|real`. Produce machine-readable results containing each prompt, emitted commands, before/after JSON, revision, tool result, and assertions.
+- [x] Define expected object IDs, action types, changed fields, and unchanged fields independently in scenario files. Do not use the agent's own output to generate the expected answer.
+- [x] Support a real-model smoke mode for checking natural-language requests against the fixture. Assert structured behavior and numeric tolerances, not exact assistant prose. Retain injected-model tests for repeatable routing, failure, and recovery checks; those alone do not prove natural-language understanding.
+
+**Verification:** all 12 checked-in synthetic scenarios pass in injected mode through real WebSocket services, real agent SQLite, and atomic simulated JSON saves. Strict fixture and independent-assertion negative checks pass (2 tests). Real-model verification passes all 9 natural-language scenarios; 3 timing-fault scenarios are explicitly skipped in real mode and pass in injected mode. This includes the unchanged zero-mutation manual-conflict expectation after the durable rejected-reversal guard was added. Real-model testing also caught and verified the fix for Gemini-incompatible tuple schemas. Original failure evidence is retained separately from passing reports under `artifacts/`; final reports are `studio-smoke.json` and `studio-smoke-real.json`. Database-export mapping and its acceptance remain unchecked: no database fixture was supplied. The runner accepts an explicitly mapped shared snapshot, never guesses a raw database schema.
 
 Run these scenarios with object IDs and coordinates taken from the export:
 
@@ -203,15 +207,13 @@ Update `README.md`, `docs/Architect.md`, and `.env.example` with the implemented
 
 ## Delivery order
 
-Use `gh stack` when implementation begins to keep the agent changes reviewable. This planning task does not create implementation branches or PRs.
+Implementation uses `gh stack` targeting `main`. Four layers were approved to keep every PR tree buildable: contracts; broker/private services/origins; durable journal/session runtime/tools/reversal/restart tests; UI/smoke/docs. The original six-layer intent is consolidated below without dropping behavior.
 
-| PR | Contents | Exit condition |
+| PR | Contents | Evidence / pending acceptance |
 | --- | --- | --- |
-| 1 | Shared contracts, coordinate fixtures, and external-consumer package handoff | Studio implementer can build against the contract. |
-| 2 | Broker, connection services, binding, and origin configuration | Correct routing/context with fake Studios. |
-| 3 | Durable journal, dispatch, reconciliation, and restart coverage | External commands recover without duplicate mutation. |
-| 4 | Room-aware context and move/rotate/remove tools | Deterministic agent-to-Studio action flow works. |
-| 5 | Conversational reversal | Stored transform reversal works without an undo tool. |
-| 6 | Chat attachment/status UI, JSON smoke runner using the database export, and setup docs | Headless command/state acceptance scenarios pass. |
+| [#8](https://github.com/anthoai97/livi-agent/pull/8) | Shared contracts, source-verified coordinate fixtures, external-consumer tarballs | Isolated TypeScript/browser/runtime consumer passed; companion agreement remains pending. |
+| [#9](https://github.com/anthoai97/livi-agent/pull/9) | Broker, private connection services, generation/ownership fences, origins | Private mailbox, generation, context-ordering, and reconnect tests passed. |
+| [#11](https://github.com/anthoai97/livi-agent/pull/11) | Durable journal, pinned planning/binding, three tools, reversal, SQLite restart coverage | 39 decorator and 9 server/broker tests pass; real-provider conflict verification passes with zero mutation commands. |
+| 4 (UI/smoke/docs) | Chat attachment/status UI, synthetic JSON adapter/smoke, setup/status docs | 12 injected and 9 real-model scenarios pass on synthetic JSON (3 timing-fault scenarios are injected-only); final browser checks pass. Supplied database export/mapping and joint real Studio acceptance remain pending. |
 
-The Studio adapter can be implemented alongside PRs 2–5 after PR 1 establishes the contract. Agent milestone acceptance uses the database-derived JSON fixture and headless adapter and does not wait for the 3D Studio. Real remote deduplication, editor integration, and backend persistence evidence remain the companion issue's responsibility; passing the JSON smoke tests does not establish those behaviors or close the Studio adapter issue. Issue #7's joint Studio acceptance also remains pending until the real integration passes or the issue owner explicitly revises that criterion.
+The Studio adapter can be implemented alongside PRs 2–3 after PR 1 establishes the contract. Agent milestone acceptance uses the database-derived JSON fixture and headless adapter and does not wait for the 3D Studio. Real remote deduplication, editor integration, and backend persistence evidence remain the companion issue's responsibility; passing the JSON smoke tests does not establish those behaviors or close the Studio adapter issue. Issue #7's joint Studio acceptance also remains pending until the real integration passes or the issue owner explicitly revises that criterion.
