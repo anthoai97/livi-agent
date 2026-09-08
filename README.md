@@ -62,6 +62,8 @@ Install all tarballs listed by `/tmp/livi-studio-contracts/handoff.json` togethe
 
 In chat, select a conversation, choose a connected Studio, and click **Attach design**. The panel shows the attached design, selected placed objects, and Offline, Reconciling, or Ready. Changing conversations and changing a design are separate controls. A design remains locked while an action's outcome is unresolved.
 
+Ask directly, for example “move the sofa 0.5 metres right”. The agent resolves the object from the room inventory and asks which one when the target is ambiguous. Clicking an object in Studio is optional; selection is only a hint.
+
 Only move, yaw rotation, and remove are supported. Moves use metres: +X right, +Y back, +Z up, from the floor's front-left. Rotation uses radians around +Z. “Move it back” and “undo that rotation” use saved before/after transforms, including after reopening a conversation. An intervening change to that object's transform prevents reversal. A rejected reversal blocks further room edits in that response; clarify with a new message. Removal cannot be reversed; adding, replacing, restoring, materials, and layout generation are outside this scope.
 
 Reconnect hydrates attachment and action history without resending a prompt or command. Stop prevents unsent work and ends the model response. A command already sent may still save; the **Room actions** list shows its eventual saved, rejected, or uncertain outcome even after Stop. A timeout is not proof of rollback. Keep Studio connected to reconcile it.
@@ -88,7 +90,7 @@ The actual database export and its field mapping are still pending. The checked-
 | `openings` | Verified door/window IDs, positions, and dimensions; an empty array only for a room known to have none |
 | `objects[].id`, `name`, `category` | Placed instance identity and identifying text; catalog IDs cannot substitute for instance IDs |
 | `objects[].dimensions`, `position`, `rotation`, `scale` | Explicit finite transform/dimension triples in the documented coordinates; yaw only |
-| `selectedObjectIds` | Explicit initial selection; each scenario supplies transient selected instance IDs |
+| `selectedObjectIds` | Initial selection, or `[]` when nothing is selected; each scenario supplies these optional hints |
 
 Do not invent missing revisions, geometry, IDs, transforms, or coordinate conversions. Unknown extra snapshot/object fields are preserved and checked during mutations. Raw database shapes need a reviewed explicit mapping before this runner can consume them; the illustrative snapshot is not a database schema. Scenario expectations must name exported instances and expected coordinates independently of model output.
 

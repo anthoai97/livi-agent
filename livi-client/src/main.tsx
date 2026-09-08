@@ -368,7 +368,7 @@ function App() {
 					</div>
 					<p className="studio-hint">
 						{studioState?.busy
-							? "Checking an unresolved action. Keep this design attached until its saved outcome is known."
+							? "Waiting for a room action result. Chat is available."
 							: !studioState?.binding
 								? "General chat is available. Attach a ready Studio for room actions."
 								: !connection || studioState.phase === "offline"
@@ -377,7 +377,7 @@ function App() {
 										? "Reading the saved room and checking previous results…"
 										: selectedObjects.length
 											? `Selected: ${selectedObjects.map((object) => `${object.name} (${object.id})`).join(", ")}`
-											: "No objects selected in Studio. Name an object or select one there."}
+											: "Name an object in your message, like ‘move the sofa 0.5 metres right’. Selection is optional."}
 					</p>
 				</section>
 				<section className="transcript" aria-label="Chat transcript" aria-busy={Boolean(operation)}>
@@ -417,30 +417,28 @@ function App() {
 					{Boolean(studioState?.actions.length) && (
 						<section className="studio-actions" aria-label="Room actions" aria-live="polite">
 							<h2>Room actions</h2>
-							{studioState?.actions.map((action) => (
-								<article className={`studio-action ${action.state}`} key={action.commandId}>
-									<strong>
-										{action.action === "move" ? "Move" : action.action === "rotate" ? "Rotate" : "Remove"} ·{" "}
-										{action.objectId}
-									</strong>
-									<span>
-										{action.state === "committed"
-											? "Saved"
-											: action.state === "rejected"
-												? "Rejected"
-												: action.state === "cancelled_before_send"
-													? "Cancelled before sending"
-													: action.state === "prepared"
-														? "Preparing action"
-														: "Waiting for saved outcome"}
-									</span>
-									{action.message !== "Saved" && <p>{action.message}</p>}
-								</article>
-							))}
-							<p className="studio-hint">
-								Stop ends the response. An action already sent may still save; its result appears here after
-								reconnection.
-							</p>
+							{studioState?.actions.map((action) => {
+								const status =
+									action.state === "committed"
+										? "Saved"
+										: action.state === "rejected"
+											? "Rejected"
+											: action.state === "cancelled_before_send"
+												? "Cancelled before sending"
+												: action.state === "prepared"
+													? "Saving…"
+													: "Unconfirmed";
+								return (
+									<article className={`studio-action ${action.state}`} key={action.commandId}>
+										<strong>
+											{action.action === "move" ? "Move" : action.action === "rotate" ? "Rotate" : "Remove"}{" "}
+											· {action.objectId}
+										</strong>
+										<span>{status}</span>
+										{action.message && action.message !== status && <p>{action.message}</p>}
+									</article>
+								);
+							})}
 						</section>
 					)}
 					{snapshot?.lastResult?.status === "failed" && (

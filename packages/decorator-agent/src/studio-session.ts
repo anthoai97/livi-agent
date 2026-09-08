@@ -103,8 +103,10 @@ export class StudioSessionRuntime {
 							: record.state === "cancelled_before_send"
 								? "Cancelled before sending"
 								: record.state === "prepared"
-									? "Preparing room action"
-									: "Checking whether the room action was saved; Stop does not undo it",
+									? "Saving…"
+									: record.result?.status === "pending" || record.result?.status === "unknown"
+										? record.result.message
+										: "Unconfirmed",
 			}));
 			this.state.publish(BACKGROUND_CONTEXT);
 		});

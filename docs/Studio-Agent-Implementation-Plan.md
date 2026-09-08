@@ -17,6 +17,8 @@ For this repository's acceptance, use JSON smoke tests with room data exported f
 
 This defines an agent implementation milestone. Issue #7 still includes joint acceptance with the real Studio: select a chair, move it, rotate it, reverse the rotation, remove it, and reload to verify persistence. Keep that criterion pending until it passes with #36, unless the issue owner explicitly changes it. Simulated JSON saves do not complete that criterion.
 
+Manual object selection is optional. The primary flow names an object in a prompt, such as “move the sofa 0.5 metres right”; the model resolves its exact ID from the room inventory and asks only when the target is ambiguous. The selection example above also exercises optional selection hints.
+
 ## Starting point
 
 | Existing code | What we will extend |
@@ -175,7 +177,7 @@ Run these scenarios with object IDs and coordinates taken from the export:
 | --- | --- |
 | Ask which objects are in the room and where a named object is | Response is grounded in fixture identities/positions; no mutation occurs. |
 | Reopen a conversation created before Studio tools were added, attach a Studio, and submit a new move request | The new generation exposes exactly the three supported tools and can execute the move. |
-| Select an object and request a concrete move | The intended instance's position changes as requested; rotation, scale, and all other objects remain unchanged. |
+| Name an object and request a concrete move with no selection; also exercise optional selection hints | The intended instance's position changes as requested; rotation, scale, and all other objects remain unchanged. |
 | Request a rotation | Only the intended rotation changes. |
 | Reverse the rotation, reopen the conversation, then reverse the earlier move | Previous values come from committed records and match the resulting JSON. |
 | Change the object's transform directly in the fixture and advance its revision | Reversal or a stale command cannot silently overwrite the simulated manual edit. |
