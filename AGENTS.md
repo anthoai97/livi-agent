@@ -7,7 +7,7 @@
 - Do not over-engineering.
 - Aim for simple, elegant implementations.
 - Use `gh stack` to stacked PRs break large changes into a chain of small, reviewable pull requests that build on each other.
-- When user ask review code, use `herdr` to create a new pannel that run Claude model (Opus 5 high) and run /code-review, after that you fix the finding, loop that flow 3 times if needed.
+- When user ask review code only, use `herdr` to create a new pannel that run Claude model (Opus 5 high) and run /code-review, after that you fix the finding, loop that flow 3 times if needed.
 - Do not write tests for reversible, low-impact changes that mirror the implementation. If you do choose to verify your work with tests, make sure that the tests are meaningful and necessary to verify implementation.
 - Run tests appropriate to the change and complete required checks. Once those pass, broaden or repeat testing only when new changes, failures, or unresolved concerns justify it; otherwise, continue toward completing the task.
 - If at any point you can parallelize work by delegating tasks to another agent (no matter if you are the root or subagent), you should do so using collaboration tools if it could save time or improve quality.

@@ -15,6 +15,8 @@ Studio's backend remains the authority for the design. The agent stores command 
 
 For this repository's acceptance, use JSON smoke tests with room data exported from the user's database query. A headless adapter exercises the same connection contract and applies commands to a local JSON copy. Running the 3D Studio, loading models, visual inspection, and screenshot tests are not required. This changes the testing approach, not the production Studio connection architecture. Real editor integration and backend persistence verification belong to the companion issue.
 
+This defines an agent implementation milestone. Issue #7 still includes joint acceptance with the real Studio: select a chair, move it, rotate it, reverse the rotation, remove it, and reload to verify persistence. Keep that criterion pending until it passes with #36, unless the issue owner explicitly changes it. Simulated JSON saves do not complete that criterion.
+
 ## Starting point
 
 | Existing code | What we will extend |
@@ -44,6 +46,7 @@ Two constraints affect the implementation:
 - [ ] Use absolute target position/rotation in mutation commands. Relative language is resolved against a known snapshot before dispatch; replay must not add a delta again.
 - [ ] Define a command envelope containing stable command ID, conversation/design/tab binding, expected revision, action, placed object ID, and action-specific arguments. Generate routing and command IDs in application code, never in model arguments.
 - [ ] Define results with command identity, status, canonical saved revision, updated scene, and authoritative before/after transforms for successful moves/rotations. Distinguish rejected, still pending, saved, and unknown outcomes.
+- [ ] Keep a command's saved result immutable and separate from current room context. A delayed acknowledgement or status lookup can describe an older revision; it must settle the journal without replacing a newer scene or selection. Apply registration/sequence checks to every context-bearing response, and fetch fresh saved context when ordering cannot be established.
 - [ ] Define mailbox requests for fresh saved context, executing a mutation, and checking a previous command's status. Read requests also need correlation IDs and bounded waits; they are not mutation tools.
 - [ ] Define structured errors for unavailable Studio, wrong binding, invalid target/arguments, stale revision, save rejection, and uncertain outcome.
 - [ ] Provide a consumable build of the browser-safe contracts and required transport dependencies to `web-pipeline`. Start with versioned local package tarballs and verify an isolated consumer build; the sibling repository cannot resolve this workspace's `workspace:*` dependencies by itself. Do not copy independent contract definitions between repositories.
@@ -60,7 +63,7 @@ Two constraints affect the implementation:
 - [ ] Expose connected Studio summaries for the chat picker and a session-scoped service for binding/unbinding a conversation and subscribing to its Studio status.
 - [ ] Initially permit one controlling conversation per design and one in-flight agent mutation per design. Apply this across tabs, not just within an agent lane. Manual changes remain protected by Studio's revision check.
 - [ ] Persist the chosen design/tab association using session values. Keep sockets and connection generations in memory. Reopening a conversation remembers its target but does not invent a live connection.
-- [ ] Pin the target binding to an admitted decoration operation. Refuse target reassignment while it has an unresolved mutation; never let a delayed tool call target a newly selected room.
+- [ ] Persist the target binding, including an unattached state, under an application-generated operation ID before admitting the prompt with that ID, serializing admission against binding changes. Missing admission binding on recovery must block room actions rather than adopting the conversation's current binding. Refuse target reassignment while it has an unresolved mutation; never let a delayed tool call target a newly selected room. Discard unused binding records if admission fails.
 - [ ] Extend provider cleanup in place to mark its Studio offline, remove subscriptions, and settle bounded read waits. An old connection's cleanup must not remove a newer registration.
 - [ ] On reconnect, require registration, new subscriptions, a fresh saved scene, and outstanding-command reconciliation before marking the design ready.
 - [ ] Add explicit configured Studio origins to the server's existing WebSocket origin check. Support the same allowed origins on `/api/bootstrap` if Studio fetches it directly. Wire configuration through `main.ts` and `.env.example`; preserve existing same-origin chat behavior.
@@ -74,6 +77,7 @@ Two constraints affect the implementation:
 - [ ] Add a focused command journal using existing `Session` values, for example namespaces `livi.studio.binding` and `livi.studio.command`. Keep actual before/after transforms in these records; do not introduce a second history store initially.
 - [ ] Use the pair of session ID and harness `invocationId` as the logical command identity. If Studio requires UUID operation IDs, agree a deterministic mapping in Step 1. Store operation/turn identity for correlation.
 - [ ] Persist the exact command, binding, observed before transform, and expected revision before making it visible to Studio. A recovered command must retain the original target and payload.
+- [ ] Persist the planning snapshot before sending the model request, including the saved scene, binding, selection, and revision, keyed to the operation and generation/turn. Tool invocation identity does not exist at planning time. Recovery must load that snapshot even if the assistant response was saved before the first command record was created; missing planning evidence must prevent dispatch and require explicit replanning.
 - [ ] Use `Session.mutate` to read a record and atomically commit its transition with the existing value-write helpers. Release the mutation lock before any network wait; do not call public session writers from inside a mutation callback.
 - [ ] Persist an uncertain state before publishing the mutation to the mailbox. A crash between this write and actual delivery is reconciled conservatively.
 - [ ] Persist the authoritative saved result before resolving the tool successfully. Duplicate identical results return the existing record; conflicting results require reconciliation rather than replacing a committed result.
@@ -102,6 +106,7 @@ Stop prevents commands that have not been published. After publication, it stops
 **Purpose:** connect natural-language intent to the proven command path.
 
 - [ ] Extend `DecoratorSession.create` in place with the Studio dependency and typed per-turn context. Use the harness's existing tool-context provider and system-prompt callback to supply room data to the model. No separate read-room model tool is required initially.
+- [ ] Account for the harness resolving `toolContext` separately for the system prompt and tool execution, including replay. Both must use the same durable planning snapshot for that generation/turn; fetching current context again inside the tool-context provider must not change the revision attached to existing model arguments. Refresh for the next model generation after a saved result or stale rejection, including within the same admitted operation.
 - [ ] Request a fresh saved snapshot before planning a decoration action. Capture the target and selection used for that action; do not silently retarget if selection changes while the model is thinking.
 - [ ] Include a compact room/object summary and relevant committed action records. Treat object labels and room descriptions as data, not instructions. If context is missing or saving fails, return an unavailable state instead of using an old snapshot as current.
 - [ ] Add three typed tool definitions in one focused tools module. Start with one object per invocation; the agent can issue several sequentially for an explicit multi-object request.
@@ -115,7 +120,7 @@ Stop prevents commands that have not been published. After publication, it stops
 - [ ] Validate finite coordinates/angles, exact instance identity, supported action shape, and the operation's pinned binding. Reuse Studio's existing placement restrictions; do not add a layout solver or claim collision validation the adapter does not supply.
 - [ ] Pass the revision used to plan the action. If the room changes, return stale context and refresh/replan explicitly; do not stamp a fresh revision onto old model arguments.
 - [ ] Serialize mutations through the broker. If a model emits multiple calls planned against one revision, reject/replan later stale calls rather than silently rebasing them.
-- [ ] Register only these three mutation tools and update active-tool configuration. Use current installed TypeBox/harness APIs when implementing; keep shell/filesystem capabilities unavailable.
+- [ ] Register only these three mutation tools and explicitly set the main lane's allowlist with `lane.setActiveTools(...)` for new and reopened conversations before starting recovered drives. Constructor options only seed new lanes; existing chats retain their stored empty allowlist. Preserve configurations already captured by in-flight generations/batches; the new allowlist applies at subsequent planning boundaries. Use current installed TypeBox/harness APIs when implementing; keep shell/filesystem capabilities unavailable.
 - [ ] Update the prompt: use selection when unambiguous, ask about unclear targets/directions/distances, describe errors accurately, and claim a change only from a committed tool result. Define room-relative directions; do not infer camera-relative "left" without camera context.
 - [ ] Update existing zero-tool assertions to the explicit three-tool allowlist while preserving unavailable-tool rejection coverage and ordinary chat behavior.
 
@@ -165,6 +170,7 @@ Run these scenarios with object IDs and coordinates taken from the export:
 | Scenario | JSON assertion |
 | --- | --- |
 | Ask which objects are in the room and where a named object is | Response is grounded in fixture identities/positions; no mutation occurs. |
+| Reopen a conversation created before Studio tools were added, attach a Studio, and submit a new move request | The new generation exposes exactly the three supported tools and can execute the move. |
 | Select an object and request a concrete move | The intended instance's position changes as requested; rotation, scale, and all other objects remain unchanged. |
 | Request a rotation | Only the intended rotation changes. |
 | Reverse the rotation, reopen the conversation, then reverse the earlier move | Previous values come from committed records and match the resulting JSON. |
@@ -172,6 +178,8 @@ Run these scenarios with object IDs and coordinates taken from the export:
 | Remove the object, then reload local adapter state | Only that instance is absent; state survives the simulated adapter restart. |
 | Ask to reverse removal or refer ambiguously to multiple similar objects | No unsupported or ambiguous mutation is sent. |
 | Drop the reply after the adapter saves locally, reconnect, and restart the agent process | The same command is reconciled without another edit. |
+| Crash after the assistant response is saved but before its first command record; change the room before restarting | The recovered tool retains its original planning revision and fails stale; it cannot adopt the new revision for old arguments. |
+| Publish newer scene/selection context before a delayed saved acknowledgement or status reply | The command outcome settles while current scene/selection remains newer. |
 | Stop before dispatch and after dispatch | Command records and reported outcomes match whether an effect may have occurred. |
 | Connect a second headless adapter with a different design | Commands and delayed replies cannot cross bindings. |
 
@@ -206,4 +214,4 @@ Use `gh stack` when implementation begins to keep the agent changes reviewable. 
 | 5 | Conversational reversal | Stored transform reversal works without an undo tool. |
 | 6 | Chat attachment/status UI, JSON smoke runner using the database export, and setup docs | Headless command/state acceptance scenarios pass. |
 
-The Studio adapter can be implemented alongside PRs 2–5 after PR 1 establishes the contract. Agent acceptance uses the database-derived JSON fixture and headless adapter and does not wait for the 3D Studio. Real remote deduplication, editor integration, and backend persistence evidence remain the companion issue's responsibility; passing the JSON smoke tests does not establish those behaviors or close the Studio adapter issue.
+The Studio adapter can be implemented alongside PRs 2–5 after PR 1 establishes the contract. Agent milestone acceptance uses the database-derived JSON fixture and headless adapter and does not wait for the 3D Studio. Real remote deduplication, editor integration, and backend persistence evidence remain the companion issue's responsibility; passing the JSON smoke tests does not establish those behaviors or close the Studio adapter issue. Issue #7's joint Studio acceptance also remains pending until the real integration passes or the issue owner explicitly revises that criterion.
