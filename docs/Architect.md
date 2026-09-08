@@ -8,7 +8,7 @@ A React + Vite client connects to one Node 24 HTTP server using PI's framed CBOR
 
 The server owns a SQLite repository and one `DecoratorSession` runtime per open conversation. PI's server preserves logical server, session, and attachment routing. Chord handles typed service calls and replicated subscription snapshots and updates.
 
-`DecoratorSession` wraps the local `AgentHarness` and its `main` lane. It owns the Livi prompt, Gemini model selection, durable prompt admission, background generation, aborts, transcript subscriptions, interrupted-operation recovery, and cleanup. Automatic compaction is disabled. Exactly three tools are exposed: `move_object`, `rotate_object`, and `remove_object`. New and reopened lanes receive that allowlist at the next planning boundary. No shell, filesystem, skills, extensions, or MCP capabilities are registered.
+`DecoratorSession` wraps the local `AgentHarness` and its `main` lane. It owns the Livi prompt, Gemini model selection, durable prompt admission, background generation, aborts, transcript subscriptions, interrupted-operation recovery, and cleanup. Automatic compaction is disabled. Three mutation tools (`move_object`, `rotate_object`, and `remove_object`) and the read-only `get_room_context` tool are exposed. New and reopened lanes receive that allowlist at the next planning boundary. No shell, filesystem, skills, extensions, or MCP capabilities are registered.
 
 ## Packages
 
@@ -62,7 +62,7 @@ Studio owns the current room and saving. The agent reads that context and sends 
 
 ## Action and chat lifecycle
 
-Each action is dispatched once. If the reply is lost, the tool reports no result; it does not infer rollback, query history, or automatically retry the same edit in that operation. A later explicit user request can act on Studio's current context. Old unresolved records remain unchanged and do not lock rooms after a new runtime starts.
+Each action is dispatched once. A known `stale_revision` rejection of an ordinary action prompts `get_room_context`, inspection, and recalculation within the same user operation (at most two retries by prompt policy). The refreshed snapshot supplies the next model generation and its action admission; precomputed calls in the refresh batch keep their original evidence. Initial generations still fetch context automatically. Refresh stays bound to the admitted design/tab and honors cancellation; it never clears unknown-outcome or failed-reversal mutation blocks. If the reply is lost, the tool reports no result; it does not infer rollback, query history, or automatically retry the same edit in that operation. A later explicit user request can act on Studio's current context. Old unresolved records remain unchanged and do not lock rooms after a new runtime starts.
 
 The installed harness's non-replay tool policy prevents interrupted room actions from being resent after restart, including invocations recorded under the previous replay policy. Ordinary chat admission, persistence, model response recovery, and cancellation continue. Stop prevents unsent work and ends the response; an already sent command may still save in Studio.
 

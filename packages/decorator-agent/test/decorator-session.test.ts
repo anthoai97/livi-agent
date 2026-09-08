@@ -5,7 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { DecoratorSession } from "../src/decorator-session.ts";
 
 const cleanup: (() => Promise<void>)[] = [];
-const toolNames = ["move_object", "rotate_object", "remove_object"];
+const toolNames = ["move_object", "rotate_object", "remove_object", "get_room_context"];
 afterEach(async () => {
 	for (const close of cleanup.splice(0).reverse()) await close();
 });

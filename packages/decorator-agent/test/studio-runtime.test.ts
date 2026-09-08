@@ -71,12 +71,17 @@ async function adapter(broker: StudioBroker, stored: Session) {
 		commands: [] as StudioCommand[],
 		results: new Map<string, StudioCommandResult>(),
 		hold: false,
+		holdContext: false,
 		held: [] as StudioMailboxRequest[],
 		errors: [] as unknown[],
 	};
 	const seen = new Set<string>();
 	const respond = async (request: StudioMailboxRequest) => {
 		if (request.type === "context") {
+			if (state.holdContext) {
+				state.held.push(request);
+				return;
+			}
 			await connection.service.respond(
 				{
 					requestId: request.requestId,
@@ -212,6 +217,11 @@ async function prompt(runtime: DecoratorSession, message = "Move the selected ch
 
 it("sends Gemini numeric-array schemas instead of unsupported tuple item arrays", () => {
 	const declarations = convertTools(createStudioTools())![0]!.functionDeclarations;
+	expect(declarations.find((tool) => tool.name === "get_room_context")?.parametersJsonSchema).toMatchObject({
+		type: "object",
+		properties: {},
+		additionalProperties: false,
+	});
 	for (const [index, field] of [
 		[0, "position"],
 		[1, "rotation"],
@@ -223,39 +233,123 @@ it("sends Gemini numeric-array schemas instead of unsupported tuple item arrays"
 	}
 });
 
-it("retains the original planning revision and selection while the model waits, then refreshes at the next generation", async () => {
-	const { runtime, fake, faux } = await fixture();
-	const started = Promise.withResolvers<void>();
-	const release = Promise.withResolvers<void>();
+it("refreshes a rejected stale move and recomputes from the new position in the same operation", async () => {
+	const { runtime, fake, faux, broker } = await fixture();
+	const fresh = vi.spyOn(broker, "freshContext");
+	const prepare = vi.spyOn(runtime.studio, "prepare");
+	fake.state.snapshot.selectedObjectIds = [];
 	faux.setResponses([
-		async (input) => {
+		(input) => {
 			expect(input.systemPrompt).toContain('"revision":"1"');
-			started.resolve();
-			await release.promise;
+			fake.state.snapshot.objects[0]!.position = [4, 2, 0];
+			fake.state.snapshot.revision = "2";
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
 			});
 		},
 		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("stale_revision");
+			return fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			const result = input.messages.findLast(
+				(message) => message.role === "toolResult" && message.toolName === "get_room_context",
+			);
+			if (result?.role !== "toolResult" || result.content[0]?.type !== "text") throw new Error("Missing refresh");
+			const planning = JSON.parse(result.content[0].text) as { operationId: string; snapshot: StudioSnapshot };
+			expect(planning.snapshot.revision).toBe("2");
+			expect(planning.snapshot.selectedObjectIds).toEqual([]);
+			expect(input.systemPrompt).toContain('"position":[4,2,0]');
+			// Initial generation, post-rejection generation, explicit refresh; no incidental fetch masks the handoff.
+			expect(fresh).toHaveBeenCalledTimes(3);
+			const object = planning.snapshot.objects.find((object) => object.id === "chair-1")!;
+			return fauxAssistantMessage(
+				fauxToolCall("move_object", {
+					objectId: object.id,
+					position: [object.position[0] + 1, object.position[1], object.position[2]],
+				}),
+				{ stopReason: "toolUse" },
+			);
+		},
+		fauxAssistantMessage("Moved one metre right"),
+	]);
+	const operationId = await prompt(runtime, "Move chair-1 one metre right");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "2"]);
+	expect(fake.state.snapshot.objects[0]?.position).toEqual([5, 2, 0]);
+	expect(prepare.mock.calls.map(([record]) => record.operationId)).toEqual([operationId, operationId]);
+	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+	expect(entries.filter((entry) => entry.type === "message" && entry.message.role === "user")).toHaveLength(1);
+	expect((await runtime.studio.journal.records())[0]?.state).toBe("committed");
+});
+
+it("does not rebase precomputed actions in the refresh batch", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		() => {
+			fake.state.snapshot.objects[0]!.position = [4, 2, 0];
+			fake.state.snapshot.revision = "2";
+			return fauxAssistantMessage(
+				[
+					fauxToolCall("get_room_context", {}),
+					fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }),
+				],
+				{ stopReason: "toolUse" },
+			);
+		},
+		(input) => {
 			expect(input.systemPrompt).toContain('"revision":"2"');
-			expect(input.systemPrompt).toContain('"selectedObjectIds":["chair-2"]');
-			return fauxAssistantMessage("The room changed; please confirm the new position.");
+			expect(input.systemPrompt).toContain('"position":[4,2,0]');
+			return fauxAssistantMessage("Replanning required");
+		},
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(fake.state.commands[0]?.expectedRevision).toBe("1");
+	expect(fake.state.snapshot.objects[0]?.position).toEqual([4, 2, 0]);
+});
+
+it("refuses refresh after the conversation attachment changes", async () => {
+	const { runtime, fake, faux, broker } = await fixture();
+	const fresh = vi.spyOn(broker, "freshContext");
+	faux.setResponses([
+		async () => {
+			await runtime.studio.service.bind({ designId: "different-room", tabId: "different-tab" }, context);
+			return fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("wrong_binding");
+			return fauxAssistantMessage("The attachment changed");
+		},
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fresh).toHaveBeenCalledTimes(1);
+	expect(fake.state.commands).toEqual([]);
+});
+
+it("cancels an in-flight explicit refresh without sending the next batch action", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		() => {
+			fake.state.holdContext = true;
+			return fauxAssistantMessage(
+				[
+					fauxToolCall("get_room_context", {}),
+					fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }),
+				],
+				{ stopReason: "toolUse" },
+			);
 		},
 	]);
 	const operationId = await prompt(runtime);
-	await started.promise;
-	fake.state.snapshot.revision = "2";
-	fake.state.snapshot.selectedObjectIds = ["chair-2"];
-	await fake.publish();
-	release.resolve();
+	await expect.poll(() => fake.state.held.length).toBe(1);
+	await runtime.controller.requestAbort(operationId, context);
 	await runtime.lane.waitForIdle(context);
-	expect(fake.state.commands).toHaveLength(1);
-	expect(fake.state.commands[0]).toMatchObject({ expectedRevision: "1", objectId: "chair-1" });
-	expect(fake.state.snapshot.objects[0]?.position).toEqual([1, 2, 0]);
-	expect(JSON.stringify(await runtime.lane.findEntries({ order: "oldestFirst" }, context))).toContain(
-		"Room changed since planning",
-	);
-	expect(await runtime.studio.journal.admission(operationId)).toBeUndefined();
+	expect(await runtime.lane.getResult(operationId, context)).toMatchObject({ status: "aborted" });
+	expect(fake.connection.service.mailbox.value!.requests).toEqual([]);
+	expect(fake.state.commands).toEqual([]);
 });
 
 it("moves, rotates, and reverses completed actions across reopen", async () => {
@@ -534,7 +628,12 @@ it("upgrades an old empty allowlist while keeping an admitted generation's captu
 			return fauxAssistantMessage("Recovered old chat");
 		},
 		(input) => {
-			expect(input.tools?.map((tool) => tool.name)).toEqual(["move_object", "rotate_object", "remove_object"]);
+			expect(input.tools?.map((tool) => tool.name)).toEqual([
+				"move_object",
+				"rotate_object",
+				"remove_object",
+				"get_room_context",
+			]);
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
 			});
@@ -586,6 +685,13 @@ it("refuses reversal after a manual object change", async () => {
 			fauxToolCall("move_object", { objectId: "chair-1", originalCommandId: original.command.commandId }),
 			{ stopReason: "toolUse" },
 		),
+		fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" }),
+		(input) => {
+			expect(input.systemPrompt).toContain("Current request mutation block: true");
+			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [1, 2, 0] }), {
+				stopReason: "toolUse",
+			});
+		},
 		fauxAssistantMessage("The object changed"),
 	]);
 	await prompt(runtime, "Move it back");
@@ -604,6 +710,10 @@ it("reports a lost reply once, refuses a model retry, and permits the next expli
 		(input) => {
 			const results = input.messages.filter((message) => message.role === "toolResult");
 			expect(JSON.stringify(results)).toContain("No result");
+			return fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			expect(input.systemPrompt).toContain("Current request mutation block: true");
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
 			});
