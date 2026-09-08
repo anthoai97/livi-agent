@@ -1,0 +1,436 @@
+{
+  "description": "Synthetic sequential deterministic scenarios. Injected responses are scripts, not natural-language verification. Expected mutations and preservation assertions are independent of model output.",
+  "scenarios": [
+    {
+      "id": "room-question",
+      "prompt": "Which objects are in the room, and where is the Red chair?",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "The Red chair is at [1,1,0] metres. The Blue chair is at [3,1,0] metres."
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ],
+        "textIncludes": [
+          "Red chair",
+          "Blue chair",
+          "1"
+        ]
+      }
+    },
+    {
+      "id": "selected-move",
+      "prompt": "Move the selected chair 0.5 metres to the right.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "Moved the Red chair.",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "position": [
+              1.5,
+              1,
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "move",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "position": [
+              1.5,
+              1,
+              0
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              1.5,
+              1,
+              0
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      }
+    },
+    {
+      "id": "rotation",
+      "prompt": "Rotate the selected chair to 90 degrees yaw.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "Rotated the Red chair.",
+        "call": {
+          "name": "rotate_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "rotation": [
+              0,
+              0,
+              1.5707963267948966
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "rotate",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "rotation": [
+              0,
+              0,
+              1.5707963267948966
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/rotation",
+            "equals": [
+              0,
+              0,
+              1.5707963267948966
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      }
+    },
+    {
+      "id": "reverse-rotation",
+      "prompt": "Undo that rotation.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "Reversed the rotation.",
+        "call": {
+          "name": "rotate_object",
+          "arguments": {
+            "objectId": "chair-red-1"
+          },
+          "originalCommandFrom": "rotation"
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "rotate",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/rotation",
+            "equals": [
+              0,
+              0,
+              0
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      }
+    },
+    {
+      "id": "reverse-move-after-reopen",
+      "prompt": "Move the Red chair back to where it was before the first move.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "Reversed the original move.",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1"
+          },
+          "originalCommandFrom": "selected-move"
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "move",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "position": [
+              1,
+              1,
+              0
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              1,
+              1,
+              0
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      },
+      "reopenBefore": true
+    },
+    {
+      "id": "manual-conflict",
+      "prompt": "Reverse the original 0.5 metre move of the Red chair. Do not overwrite an intervening manual edit.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "The chair was manually changed; please clarify.",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1"
+          },
+          "originalCommandFrom": "selected-move"
+        }
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ],
+        "toolErrorIncludes": "stale_revision"
+      },
+      "manualEdit": {
+        "objectId": "chair-red-1",
+        "transform": {
+          "position": [
+            2,
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "id": "ambiguous-question",
+      "prompt": "Move the chair.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Which chair, and how far in which direction?"
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "drop-reply-restart",
+      "prompt": "Move the selected chair to [2.5,1,0] metres.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "position": [
+              2.5,
+              1,
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "move",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "position": [
+              2.5,
+              1,
+              0
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              2.5,
+              1,
+              0
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      },
+      "dropReplyAndRestart": true
+    },
+    {
+      "id": "stop-before-dispatch",
+      "prompt": "Move the selected chair to [4,1,0] metres.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "position": [
+              4,
+              1,
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ]
+      },
+      "stop": "before_dispatch"
+    },
+    {
+      "id": "stop-after-dispatch",
+      "prompt": "Rotate the selected chair to 45 degrees yaw.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "",
+        "call": {
+          "name": "rotate_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "rotation": [
+              0,
+              0,
+              0.7853981633974483
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "rotate",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "rotation": [
+              0,
+              0,
+              0.7853981633974483
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/rotation",
+            "equals": [
+              0,
+              0,
+              0.7853981633974483
+            ],
+            "tolerance": 1e-06
+          }
+        ]
+      },
+      "stop": "after_dispatch"
+    },
+    {
+      "id": "remove-reload",
+      "prompt": "Remove the selected Red chair.",
+      "selectedObjectIds": [
+        "chair-red-1"
+      ],
+      "injected": {
+        "text": "Removed the Red chair.",
+        "call": {
+          "name": "remove_object",
+          "arguments": {
+            "objectId": "chair-red-1"
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "remove",
+            "objectId": "chair-red-1",
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/id",
+            "equals": "chair-blue-2"
+          },
+          {
+            "path": "/objects/1",
+            "absent": true
+          }
+        ]
+      },
+      "reloadAdapterAfter": true
+    },
+    {
+      "id": "removal-not-reversible",
+      "prompt": "Undo that removal.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Restoring a removed object is unavailable."
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ]
+      }
+    }
+  ]
+}
