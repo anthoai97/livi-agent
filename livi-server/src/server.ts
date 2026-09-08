@@ -4,11 +4,11 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, type Session } from "@earendil-works/pi-agent-core";
 import type { Models } from "@earendil-works/pi-ai";
 import { Server, type ServerHost, SessionNotFoundError } from "@earendil-works/pi-server";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { createServerServices, DecoratorSession, StudioBroker } from "@livi/decorator-agent";
+import { createServerServices, DecoratorSession, restoreStudioJournal, StudioBroker } from "@livi/decorator-agent";
 import { WebSocket, WebSocketServer } from "ws";
 
 export interface LiviServerOptions {
@@ -53,6 +53,21 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 	});
 	const reportError = options.onError ?? ((error: Error) => console.error(error));
 	const studio = new StudioBroker();
+	// Inventory every stored conversation before accepting connections, including unopened chats.
+	// Ownership transfers to its harness on first attachment; no second SQLite writer is opened.
+	const ownedSessions = new Map<string, Session>();
+	try {
+		for (const metadata of await repo.list(undefined, context)) {
+			const session = await repo.open(metadata, context);
+			ownedSessions.set(metadata.id, session);
+			await restoreStudioJournal(session, studio);
+		}
+	} catch (error) {
+		await studio.close();
+		await Promise.allSettled([...ownedSessions.values()].map((session) => session.close(context)));
+		await repo.close(context);
+		throw error;
+	}
 	const services = await createServerServices({
 		studio,
 		list: async () =>
@@ -74,7 +89,8 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 			return metadata;
 		},
 		async openSession(metadata) {
-			const session = await repo.open(metadata, context);
+			const session = ownedSessions.get(metadata.id) ?? (await repo.open(metadata, context));
+			ownedSessions.delete(metadata.id);
 			try {
 				return await DecoratorSession.create({
 					session,
@@ -82,9 +98,14 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 					modelId: options.modelId,
 					apiKey: options.apiKey,
 					onError: reportError,
+					studio,
 				});
 			} catch (error) {
 				await session.close(context);
+				// A failed harness must not leave reconciliation callbacks pointing at its closed writer.
+				const retained = await repo.open(metadata, context);
+				ownedSessions.set(metadata.id, retained);
+				await restoreStudioJournal(retained, studio);
 				throw error;
 			}
 		},
@@ -224,6 +245,14 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 				() => studio.close(),
 				() => protocol.close(),
 				() => services.dispose(),
+				async () => {
+					const results = await Promise.allSettled(
+						[...ownedSessions.values()].map((session) => session.close(context)),
+					);
+					ownedSessions.clear();
+					const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+					if (failures.length) throw new AggregateError(failures, "Failed to close inventoried sessions");
+				},
 				() => repo.close(context),
 				() => new Promise<void>((done, reject) => sockets.close((error) => (error ? reject(error) : done()))),
 				() =>

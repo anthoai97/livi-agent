@@ -210,3 +210,34 @@ test("reconnect requires saved context and durable status before a design become
 	assert.equal(settled, true);
 	assert.equal(broker.getState(a.binding).phase, "ready");
 });
+
+test("pending acknowledgement can later become saved on the same private request", async (t) => {
+	const broker = new StudioBroker();
+	t.after(() => broker.close());
+	const a = await adapter(broker);
+	broker.claim("chat-a", a.binding);
+	const states: string[] = [];
+	broker.track(command(), async (result) => {
+		states.push(result.status);
+		if (result.status === "saved") broker.release(result.commandId);
+	});
+	const pending = broker.execute(command(), context);
+	const request = a.service.mailbox.value!.requests[0]!;
+	await a.service.respond(
+		{
+			requestId: request.requestId,
+			generation: a.generation,
+			type: "result",
+			result: { commandId: "command-a", status: "pending", message: "Saving" },
+		},
+		context,
+	);
+	assert.equal((await pending).status, "pending");
+	assert.equal(broker.getState(a.binding).busy, true);
+	await a.service.respond(
+		{ requestId: request.requestId, generation: a.generation, type: "result", result: saved() },
+		context,
+	);
+	assert.deepEqual(states, ["pending", "saved"]);
+	assert.equal(broker.getState(a.binding).busy, false);
+});

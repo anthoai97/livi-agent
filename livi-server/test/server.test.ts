@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,7 +9,18 @@ import { createRemoteServiceBinding } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { type ByteTransportFactory, Client, createClientServiceTransport } from "@earendil-works/pi-client";
-import { AgentController, SessionDirectory, SessionManagement, Transcript } from "@livi/decorator-agent/contracts";
+import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
+import { readStudioJournal } from "@livi/decorator-agent";
+import {
+	AgentController,
+	SessionDirectory,
+	SessionManagement,
+	type StudioCommand,
+	type StudioCommandResult,
+	StudioConnection,
+	StudioDirectory,
+	Transcript,
+} from "@livi/decorator-agent/contracts";
 import { WebSocket } from "ws";
 import { startLiviServer } from "../src/server.ts";
 
@@ -353,3 +364,111 @@ test(
 		assert.equal(faux.state.callCount, 1);
 	},
 );
+
+test(
+	"startup reconciles an unopened conversation after simulated remote save and process death",
+	{ timeout: 30_000 },
+	async (t) => {
+		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-studio-restart-"));
+		const child = fork(new URL("./interrupted-studio.ts", import.meta.url), [dataDirectory], {
+			execArgv: ["--import", "tsx"],
+			stdio: ["ignore", "ignore", "inherit", "ipc"],
+		});
+		t.after(async () => {
+			child.kill("SIGKILL");
+			await rm(dataDirectory, { recursive: true, force: true });
+		});
+		const [saved] = (await once(child, "message")) as [{ type: string; sessionId: string }];
+		assert.equal(saved.type, "saved-without-ack");
+		const exited = once(child, "exit");
+		child.kill("SIGKILL");
+		await exited;
+		const evidence = JSON.parse(await readFile(join(dataDirectory, "simulated-adapter.json"), "utf8")) as {
+			command: StudioCommand;
+			result: Extract<StudioCommandResult, { status: "saved" }>;
+		};
+		const server = await startLiviServer({ dataDirectory, port: 0 });
+		const client = await Client.connect({ serverId: server.serverId, transportFactory: transport(server.port) });
+		const remote = createRemoteServiceBinding({
+			services: [StudioConnection, StudioDirectory],
+			transport: createClientServiceTransport(client, () => ({ serverId: client.serverId })),
+		});
+		t.after(async () => {
+			await remote.dispose(context);
+			await client.dispose();
+			await server.close();
+		});
+		const studio = remote.use(StudioConnection);
+		const directory = remote.use(StudioDirectory);
+		await remote.ready(context);
+		const { generation } = await studio.register(
+			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 1 },
+			context,
+		);
+		await studio.ready(generation, context);
+		await eventually(() => studio.mailbox.value?.requests[0]?.type === "context");
+		const fresh = studio.mailbox.value!.requests[0]!;
+		await studio.respond(
+			{
+				requestId: fresh.requestId,
+				generation,
+				type: "context",
+				context: { generation, sequence: 0, snapshot: evidence.result.snapshot },
+			},
+			context,
+		);
+		await eventually(() => studio.mailbox.value?.requests[0]?.type === "status");
+		const status = studio.mailbox.value!.requests[0]!;
+		assert.equal(status.type, "status");
+		if (status.type === "status") assert.equal(status.commandId, evidence.command.commandId);
+		await studio.respond(
+			{ requestId: status.requestId, generation, type: "result", result: evidence.result },
+			context,
+		);
+		await eventually(() => directory.state.value?.studios[0]?.phase === "ready");
+		assert.deepEqual(studio.mailbox.value!.requests, [], "Reconciliation must never resend the mutation");
+		await remote.dispose(context);
+		await client.dispose();
+		await server.close();
+		const repo = new SqliteSessionRepo({
+			directory: join(dataDirectory, "sessions"),
+			databaseFactory: createNodeSqliteFactory(),
+		});
+		const metadata = (await repo.list(undefined, context)).find((item) => item.id === saved.sessionId)!;
+		const session = await repo.open(metadata, context);
+		const journal = await readStudioJournal(session);
+		assert.deepEqual(journal.binding, evidence.command.binding);
+		assert.equal(journal.records.length, 1);
+		assert.equal(journal.records[0]!.state, "committed");
+		assert.deepEqual(journal.records[0]!.result, evidence.result);
+		await session.close(context);
+		await repo.close(context);
+	},
+);
+
+test("bootstrap and WebSocket allow only same origin or configured exact Studio origins", async (t) => {
+	const dataDirectory = await mkdtemp(join(tmpdir(), "livi-origins-"));
+	const server = await startLiviServer({ dataDirectory, port: 0, studioAllowedOrigins: ["http://localhost:4000"] });
+	t.after(async () => {
+		await server.close();
+		await rm(dataDirectory, { recursive: true, force: true });
+	});
+	const address = `http://127.0.0.1:${server.port}`;
+	const allowed = await fetch(`${address}/api/bootstrap`, { headers: { origin: "http://localhost:4000" } });
+	assert.equal(allowed.status, 200);
+	assert.equal(allowed.headers.get("access-control-allow-origin"), "http://localhost:4000");
+	assert.equal(
+		(await fetch(`${address}/api/bootstrap`, { headers: { origin: "http://localhost:4001" } })).status,
+		403,
+	);
+	assert.equal((await fetch(`${address}/api/bootstrap`)).status, 200);
+	const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: "http://localhost:4000" });
+	await once(socket, "open");
+	socket.terminate();
+	const denied = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: "http://localhost:4001" });
+	await once(denied, "error");
+	await assert.rejects(
+		startLiviServer({ dataDirectory, port: 0, studioAllowedOrigins: ["http://localhost:4000/path"] }),
+		/exact HTTP/,
+	);
+});
