@@ -33,21 +33,14 @@ const snapshot: StudioSnapshot = {
 async function adapter(broker: StudioBroker, tabId = "tab-a", designId = "design-a") {
 	const attachment = broker.attach();
 	const { generation } = await attachment.service.register(
-		{ tabId, designId, label: tabId, contractVersion: 1 },
+		{ tabId, designId, label: tabId, contractVersion: 2 },
 		context,
 	);
 	await attachment.service.ready(generation, context);
-	const request = attachment.service.mailbox.value!.requests[0]!;
-	await attachment.service.respond(
-		{
-			requestId: request.requestId,
-			generation,
-			type: "context",
-			context: { generation, sequence: 0, snapshot: { ...structuredClone(snapshot), designId } },
-		},
+	await attachment.service.publishContext(
+		{ generation, sequence: 0, snapshot: { ...structuredClone(snapshot), designId } },
 		context,
 	);
-	await new Promise((done) => setImmediate(done));
 	return { ...attachment, generation, binding: { tabId, designId } };
 }
 function command(): StudioCommand {
@@ -73,22 +66,15 @@ function saved(): StudioCommandResult {
 	};
 }
 
-test("private mailboxes, generation authority, design ownership, and late context ordering", async (t) => {
+test("private mailboxes preserve generation authority and newer Studio context", async (t) => {
 	const broker = new StudioBroker();
 	t.after(() => broker.close());
 	const a = await adapter(broker);
 	const b = await adapter(broker, "tab-b", "design-b");
-	broker.claim("chat-a", a.binding);
-	assert.throws(() => broker.claim("other-chat", { ...a.binding, tabId: "another-tab" }), /Another conversation/);
-	let durable = false;
-	broker.track(command(), async () => {
-		durable = true;
-		broker.release("command-a");
-	});
 	const pending = broker.execute(command(), context);
 	const request = a.service.mailbox.value!.requests[0]!;
 	assert.equal(request.type, "execute");
-	assert.equal(b.service.mailbox.value!.requests.length, 0);
+	assert.deepEqual(b.service.mailbox.value!.requests, []);
 	await assert.rejects(
 		b.service.respond(
 			{ requestId: request.requestId, generation: b.generation, type: "result", result: saved() },
@@ -96,7 +82,6 @@ test("private mailboxes, generation authority, design ownership, and late contex
 		),
 		/this connection/,
 	);
-	assert.equal(durable, false);
 	const newer = { ...structuredClone(snapshot), revision: "saved-3", selectedObjectIds: [] };
 	await a.service.publishContext({ generation: a.generation, sequence: 3, snapshot: newer }, context);
 	await a.service.respond(
@@ -105,42 +90,13 @@ test("private mailboxes, generation authority, design ownership, and late contex
 			generation: a.generation,
 			type: "result",
 			result: saved(),
-			context: { generation: a.generation, sequence: 1, snapshot: snapshot },
+			context: { generation: a.generation, sequence: 1, snapshot },
 		},
 		context,
 	);
 	assert.equal((await pending).status, "saved");
-	await a.service.respond(
-		{
-			requestId: request.requestId,
-			generation: a.generation,
-			type: "result",
-			result: saved(),
-			context: { generation: a.generation, sequence: 1, snapshot: snapshot },
-		},
-		context,
-	);
-	await assert.rejects(
-		a.service.respond(
-			{
-				requestId: request.requestId,
-				generation: a.generation,
-				type: "result",
-				result: { commandId: "command-a", status: "unknown", message: "conflicting duplicate" },
-			},
-			context,
-		),
-		/Conflicting duplicate/,
-	);
-
-	assert.equal(durable, true);
 	assert.equal(broker.getState(a.binding).snapshot?.revision, "saved-3");
 	assert.deepEqual(broker.getState(a.binding).snapshot?.selectedObjectIds, []);
-	const duplicate = broker.attach();
-	await assert.rejects(
-		duplicate.service.register({ ...a.binding, label: "duplicate", contractVersion: 1 }, context),
-		/active connection/,
-	);
 	a.release();
 	const replacement = await adapter(broker);
 	a.release();
@@ -151,93 +107,105 @@ test("private mailboxes, generation authority, design ownership, and late contex
 	);
 });
 
-test("cancelled and timed out mutation waiters retain durable late result callbacks", async (t) => {
-	const broker = new StudioBroker({ timeoutMs: 30 });
+test("lost replies settle without status requests or mutation resend on reconnect", async (t) => {
+	const broker = new StudioBroker();
 	t.after(() => broker.close());
 	const a = await adapter(broker);
-	broker.claim("chat-a", a.binding);
-	let writes = 0;
-	broker.track(command(), async () => {
-		writes++;
-		broker.release("command-a");
+	const pending = broker.execute(command(), context);
+	assert.equal(a.service.mailbox.value!.requests[0]!.type, "execute");
+	a.release();
+	await assert.rejects(pending, /Studio disconnected/);
+	const replacement = await adapter(broker);
+	assert.equal(broker.getState(replacement.binding).phase, "ready");
+	assert.equal(replacement.service.mailbox.value!.requests.length, 0);
+	const next = broker.execute({ ...command(), commandId: "new-user-command" }, context);
+	const request = replacement.service.mailbox.value!.requests[0]!;
+	assert.equal(request.type, "execute");
+	await replacement.service.respond(
+		{
+			requestId: request.requestId,
+			generation: replacement.generation,
+			type: "result",
+			result: {
+				commandId: "new-user-command",
+				status: "rejected",
+				error: { code: "save_rejected", message: "Studio declined this edit" },
+			},
+		},
+		context,
+	);
+	assert.deepEqual(await next, {
+		commandId: "new-user-command",
+		status: "rejected",
+		error: { code: "save_rejected", message: "Studio declined this edit" },
 	});
+});
+
+test("Stop releases its mailbox request and allows a later command", async (t) => {
+	const broker = new StudioBroker();
+	t.after(() => broker.close());
+	const a = await adapter(broker);
 	const cancellation = withCancel(context);
 	const pending = broker.execute(command(), cancellation.context);
-	const request = a.service.mailbox.value!.requests[0]!;
+	const stoppedRequest = a.service.mailbox.value!.requests[0]!;
 	cancellation.cancel(new Error("Stopped"));
 	await assert.rejects(pending, /Stopped/);
-	await new Promise((done) => setTimeout(done, 45));
-	assert.equal(broker.getState(a.binding).busy, true);
+	assert.equal(a.service.mailbox.value!.requests.length, 0);
 	await a.service.respond(
-		{ requestId: request.requestId, generation: a.generation, type: "result", result: saved() },
+		{ requestId: stoppedRequest.requestId, generation: a.generation, type: "result", result: saved() },
 		context,
 	);
-	assert.equal(writes, 1);
-	assert.equal(broker.getState(a.binding).busy, false);
-});
+	assert.equal(a.service.mailbox.value!.requests.length, 0);
 
-test("reconnect requires saved context and durable status before a design becomes ready", async (t) => {
-	const broker = new StudioBroker();
-	t.after(() => broker.close());
-	const a = await adapter(broker);
-	broker.claim("chat-a", a.binding);
-	let settled = false;
-	broker.track(command(), async (result) => {
-		if (result.status === "saved") {
-			settled = true;
-			broker.release(result.commandId);
-		}
-	});
-	a.release();
-	const fresh = broker.attach();
-	const { generation } = await fresh.service.register(
-		{ ...a.binding, label: "Reconnected", contractVersion: 1 },
-		context,
-	);
-	await fresh.service.ready(generation, context);
-	const read = fresh.service.mailbox.value!.requests[0]!;
-	assert.equal(read.type, "context");
-	assert.equal(broker.getState(a.binding).phase, "reconciling");
-	await fresh.service.respond(
-		{ requestId: read.requestId, generation, type: "context", context: { generation, sequence: 0, snapshot } },
-		context,
-	);
-	await new Promise((done) => setImmediate(done));
-	const status = fresh.service.mailbox.value!.requests[0]!;
-	assert.equal(status.type, "status");
-	await fresh.service.respond({ requestId: status.requestId, generation, type: "result", result: saved() }, context);
-	await new Promise((done) => setImmediate(done));
-	assert.equal(settled, true);
-	assert.equal(broker.getState(a.binding).phase, "ready");
-});
-
-test("pending acknowledgement can later become saved on the same private request", async (t) => {
-	const broker = new StudioBroker();
-	t.after(() => broker.close());
-	const a = await adapter(broker);
-	broker.claim("chat-a", a.binding);
-	const states: string[] = [];
-	broker.track(command(), async (result) => {
-		states.push(result.status);
-		if (result.status === "saved") broker.release(result.commandId);
-	});
-	const pending = broker.execute(command(), context);
+	const next = broker.execute({ ...command(), commandId: "next" }, context);
 	const request = a.service.mailbox.value!.requests[0]!;
 	await a.service.respond(
 		{
 			requestId: request.requestId,
 			generation: a.generation,
 			type: "result",
-			result: { commandId: "command-a", status: "pending", message: "Saving" },
+			result: { ...saved(), commandId: "next" },
 		},
 		context,
 	);
-	assert.equal((await pending).status, "pending");
-	assert.equal(broker.getState(a.binding).busy, true);
-	await a.service.respond(
-		{ requestId: request.requestId, generation: a.generation, type: "result", result: saved() },
+	assert.equal((await next).status, "saved");
+});
+
+test("selection before the first snapshot stays ready and only an explicit read requests context", async (t) => {
+	const broker = new StudioBroker();
+	t.after(() => broker.close());
+	const connection = broker.attach();
+	const binding = { tabId: "tab-a", designId: "design-a" };
+	const { generation } = await connection.service.register(
+		{ ...binding, label: "Studio", contractVersion: 2 },
 		context,
 	);
-	assert.deepEqual(states, ["pending", "saved"]);
-	assert.equal(broker.getState(a.binding).busy, false);
+	await connection.service.ready(generation, context);
+	await connection.service.publishSelection(
+		{ generation, sequence: 5, selectedObjectIds: ["chair-instance"] },
+		context,
+	);
+	assert.equal(broker.getState(binding).phase, "ready");
+	assert.equal(connection.service.mailbox.value!.requests.length, 0);
+	const read = broker.freshContext(binding, context);
+	const request = connection.service.mailbox.value!.requests[0]!;
+	assert.equal(request.type, "context");
+	await connection.service.respond(
+		{ requestId: request.requestId, generation, type: "context", context: { generation, sequence: 1, snapshot } },
+		context,
+	);
+	assert.deepEqual((await read).selectedObjectIds, ["chair-instance"]);
+});
+
+test("Studio can select a newly added object before publishing its updated inventory", async (t) => {
+	const broker = new StudioBroker();
+	t.after(() => broker.close());
+	const a = await adapter(broker);
+	await a.service.publishSelection(
+		{ generation: a.generation, sequence: 2, selectedObjectIds: ["new-object"] },
+		context,
+	);
+	assert.equal(broker.getState(a.binding).phase, "ready");
+	assert.deepEqual(broker.getState(a.binding).snapshot?.selectedObjectIds, ["new-object"]);
+	assert.equal(a.service.mailbox.value!.requests.length, 0);
 });

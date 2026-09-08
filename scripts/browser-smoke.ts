@@ -74,62 +74,76 @@ try {
 	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
 	await adapter.load(fixture.snapshot);
 	await adapter.connect(server);
-	await adapter.select(["chair-red-1"]);
+	await adapter.select([]);
 	await page
 		.getByLabel("Connected Studios", { exact: true })
 		.selectOption(JSON.stringify(["synthetic-room", "browser-studio"]));
 	await page.getByRole("button", { name: "Attach design", exact: true }).click();
-	await page.getByText("Selected: Red chair (chair-red-1)", { exact: true }).waitFor();
+	await page.getByText("Name an object in your message", { exact: false }).waitFor();
 	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
 	faux.appendResponses([
 		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-red-1", position: [1.5, 1, 0] }), {
 			stopReason: "toolUse",
 		}),
-		fauxAssistantMessage("The selected Red chair moved half a metre right."),
+		fauxAssistantMessage("The Red chair moved half a metre right."),
 	]);
-	await page
-		.getByRole("textbox", { name: "Message", exact: true })
-		.fill("Move the selected chair half a metre right.");
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Move the Red chair half a metre right.");
 	await page.getByRole("button", { name: "Send", exact: true }).click();
-	await page.getByText("The selected Red chair moved half a metre right.", { exact: true }).waitFor();
+	await page.getByText("The Red chair moved half a metre right.", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
 	assert.deepEqual(adapter.snapshot.objects[0]!.position, [1.5, 1, 0]);
-	const actions = page.getByRole("region", { name: "Room actions", exact: true });
-	await actions.locator(".studio-action.committed > span").waitFor();
 	assert.equal(await page.locator(".message.toolResult").count(), 0, "Raw tool results must not enter chat");
 	assert.equal(await page.locator(".message").filter({ hasText: '"commandId"' }).count(), 0);
 	await page.reload();
 	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
-	await actions.locator(".studio-action.committed > span").waitFor();
 	assert.equal(adapter.emitted.length, 1, "Hydration must not resubmit a command");
 
-	// A saved command with a dropped reply remains visible after Stop, then hydrates its late outcome.
+	// A dropped reply ends without recovery work and permits the next explicit request.
 	adapter.dropNextReply = true;
 	faux.appendResponses([
 		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-red-1", rotation: [0, 0, Math.PI / 2] }), {
 			stopReason: "toolUse",
 		}),
+		fauxAssistantMessage("Studio disconnected before a result arrived. Check the room before another edit."),
 	]);
-	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Rotate the selected chair 90 degrees.");
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Rotate the Red chair 90 degrees.");
 	await page.getByRole("button", { name: "Send", exact: true }).click();
 	await eventually(() => adapter!.saveCount === 2, "browser action saved before dropped reply");
-	await actions.getByText("Waiting for saved outcome", { exact: true }).waitFor();
-	assert.equal(await page.getByLabel("Connected Studios", { exact: true }).isDisabled(), true);
-	assert.equal(await page.getByRole("button", { name: "Disconnect design", exact: true }).isDisabled(), true);
-	await page.getByRole("button", { name: "Stop", exact: true }).click();
-	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
 	await adapter.disconnect();
-	await page.getByRole("region", { name: "Studio attachment" }).getByText("Offline", { exact: true }).waitFor();
+	await page
+		.getByText("Studio disconnected before a result arrived. Check the room before another edit.", { exact: true })
+		.waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(await page.getByRole("button", { name: "Disconnect design", exact: true }).isDisabled(), false);
 	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
 	await adapter.load(fixture.snapshot);
 	await adapter.connect(server);
-	await actions.getByText("Waiting for saved outcome", { exact: true }).waitFor({ state: "hidden" });
-	assert.equal(await actions.locator(".studio-action.committed > span").count(), 2);
-	assert.equal(adapter.emitted.length, 0, "Reconciliation must use durable status, not another edit");
-	assert.equal(adapter.saveCount, 2);
-	await page.reload();
-	await actions.locator(".studio-action.committed > span").first().waitFor();
-	assert.equal(await actions.locator(".studio-action.committed > span").count(), 2);
+	await page.getByRole("region", { name: "Studio attachment" }).getByText("Ready", { exact: true }).waitFor();
+	assert.equal(adapter.emitted.length, 0, "Reconnect must not resend an edit");
+	assert.equal(
+		adapter.requests.every((type) => type === "context"),
+		true,
+		"Reconnect sends no status lookup or edit",
+	);
+	const currentRevision = adapter.snapshot.revision;
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-red-1", position: [2, 1, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Moved the Red chair to two metres."),
+	]);
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Move the Red chair to [2,1,0].");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Moved the Red chair to two metres.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(adapter.emitted.length, 1);
+	assert.equal(
+		adapter.emitted[0]!.expectedRevision,
+		currentRevision,
+		"Next request uses Studio current state after the lost reply",
+	);
+	assert.equal(adapter.saveCount, 3);
+	assert.deepEqual(adapter.snapshot.objects[0]!.position, [2, 1, 0]);
 	await page.getByRole("button", { name: "Disconnect design", exact: true }).click();
 	await page.getByText("No design attached", { exact: true }).waitFor();
 	await mkdir("artifacts", { recursive: true });
@@ -138,7 +152,7 @@ try {
 	await page.screenshot({ path: "artifacts/chat-browser-mobile.png", fullPage: true });
 	assert.deepEqual(errors, []);
 	console.log(
-		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, selection, action results, unresolved lock, and late saved outcome after reconnect. Synthetic JSON saves only.",
+		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, named object without selection, saved response, lost reply, and next explicit edit after reconnect. Synthetic JSON saves only.",
 	);
 } finally {
 	await browser.close();

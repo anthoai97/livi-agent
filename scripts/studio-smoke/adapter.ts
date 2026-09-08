@@ -34,6 +34,7 @@ export class JsonStudioAdapter {
 	private tail = Promise.resolve();
 	private seen = new Set<string>();
 	readonly emitted: StudioCommand[] = [];
+	readonly requests: StudioMailboxRequest["type"][] = [];
 	readonly errors: string[] = [];
 	dropNextReply = false;
 	beforeExecute?: (command: StudioCommand) => Promise<void>;
@@ -118,7 +119,7 @@ export class JsonStudioAdapter {
 					designId: this.state.snapshot.designId,
 					tabId: this.tabId,
 					label: `JSON Studio · ${this.state.snapshot.designId}`,
-					contractVersion: 1,
+					contractVersion: 2,
 				},
 				context,
 			)
@@ -260,28 +261,19 @@ export class JsonStudioAdapter {
 		if (!service || request.generation !== this.generation) return;
 		if (request.binding.designId !== this.state.snapshot.designId || request.binding.tabId !== this.tabId)
 			throw new Error("Private mailbox leaked another Studio binding");
+		this.requests.push(request.type);
 		const identity = { requestId: request.requestId, generation: this.generation };
 		if (request.type === "context") {
 			await service.respond({ ...identity, type: "context", context: this.update() }, context);
 			return;
 		}
-		let result: StudioCommandResult;
-		if (request.type === "execute") {
-			this.emitted.push(structuredClone(request.command));
-			await this.beforeExecute?.(request.command);
-			result = await this.execute(request.command);
-			if (this.dropNextReply) {
-				this.dropNextReply = false;
-				return;
-			}
-		} else
-			result = Object.hasOwn(this.state.commands, request.commandId)
-				? structuredClone(this.state.commands[request.commandId]!.result)
-				: {
-						commandId: request.commandId,
-						status: "unknown",
-						message: "No durable local evidence; no automatic resend",
-					};
+		this.emitted.push(structuredClone(request.command));
+		await this.beforeExecute?.(request.command);
+		const result = await this.execute(request.command);
+		if (this.dropNextReply) {
+			this.dropNextReply = false;
+			return;
+		}
 		await service.respond({ ...identity, type: "result", result, context: this.update() }, context);
 	}
 }

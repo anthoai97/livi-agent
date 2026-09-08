@@ -153,6 +153,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 			runtime = new DecoratorSession(harness, lane, options, studio);
 			await runtime.transcript.activate();
 			for (const operation of open) {
+				await studio.journal.blockMutations(operation.operationId);
 				runtime.startDrive(operation.operationId);
 			}
 			return runtime;
@@ -176,7 +177,8 @@ export class DecoratorSession implements RoutedSessionHandle {
 				if (!(this.closing && error instanceof HarnessClosed))
 					this.onError(error instanceof Error ? error : new Error(String(error)));
 			})
-			.finally(() => {
+			.finally(async () => {
+				await this.studio.journal.discardAdmission(operationId);
 				this.drives.delete(operationId);
 			});
 		this.drives.set(operationId, pending);

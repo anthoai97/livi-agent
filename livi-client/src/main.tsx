@@ -250,7 +250,7 @@ function App() {
 	}
 
 	async function changeStudio(detach = false) {
-		if (!studio || studioChanging || studioState?.busy || operation) return;
+		if (!studio || studioChanging || operation) return;
 		const target = studios.find((item) => JSON.stringify([item.designId, item.tabId]) === studioChoice);
 		if (!detach && (!target || target.phase !== "ready")) return;
 		setStudioChanging(true);
@@ -265,7 +265,7 @@ function App() {
 		}
 	}
 
-	const bindingLocked = !studio || studioChanging || Boolean(studioState?.busy || operation);
+	const bindingLocked = !studio || studioChanging || Boolean(operation);
 	const attachedStudio = studios.find(
 		(item) => item.designId === studioState?.binding?.designId && item.tabId === studioState.binding.tabId,
 	);
@@ -332,9 +332,7 @@ function App() {
 									? "Select a conversation"
 									: studioState.phase === "ready"
 										? "Ready"
-										: studioState.phase === "reconciling"
-											? "Reconciling"
-											: "Offline"}
+										: "Offline"}
 						</output>
 					</div>
 					{studioState?.binding && <p className="muted">Design {studioState.binding.designId}</p>}
@@ -367,17 +365,13 @@ function App() {
 						)}
 					</div>
 					<p className="studio-hint">
-						{studioState?.busy
-							? "Waiting for a room action result. Chat is available."
-							: !studioState?.binding
-								? "General chat is available. Attach a ready Studio for room actions."
-								: !connection || studioState.phase === "offline"
-									? "Studio is offline. Chat remains available; room actions need a connection."
-									: studioState.phase === "reconciling"
-										? "Reading the saved room and checking previous results…"
-										: selectedObjects.length
-											? `Selected: ${selectedObjects.map((object) => `${object.name} (${object.id})`).join(", ")}`
-											: "Name an object in your message, like ‘move the sofa 0.5 metres right’. Selection is optional."}
+						{!studioState?.binding
+							? "General chat is available. Attach a ready Studio for room actions."
+							: !connection || studioState.phase === "offline"
+								? "Studio is offline. Chat remains available; room actions need a connection."
+								: selectedObjects.length
+									? `Selected: ${selectedObjects.map((object) => `${object.name} (${object.id})`).join(", ")}`
+									: "Name an object in your message, like ‘move the sofa 0.5 metres right’. Selection is optional."}
 					</p>
 				</section>
 				<section className="transcript" aria-label="Chat transcript" aria-busy={Boolean(operation)}>
@@ -413,33 +407,6 @@ function App() {
 						<output className="activity">
 							{operation.status === "aborting" ? "Stopping…" : "Livi is thinking…"}
 						</output>
-					)}
-					{Boolean(studioState?.actions.length) && (
-						<section className="studio-actions" aria-label="Room actions" aria-live="polite">
-							<h2>Room actions</h2>
-							{studioState?.actions.map((action) => {
-								const status =
-									action.state === "committed"
-										? "Saved"
-										: action.state === "rejected"
-											? "Rejected"
-											: action.state === "cancelled_before_send"
-												? "Cancelled before sending"
-												: action.state === "prepared"
-													? "Saving…"
-													: "Unconfirmed";
-								return (
-									<article className={`studio-action ${action.state}`} key={action.commandId}>
-										<strong>
-											{action.action === "move" ? "Move" : action.action === "rotate" ? "Rotate" : "Remove"}{" "}
-											· {action.objectId}
-										</strong>
-										<span>{status}</span>
-										{action.message && action.message !== status && <p>{action.message}</p>}
-									</article>
-								);
-							})}
-						</section>
 					)}
 					{snapshot?.lastResult?.status === "failed" && (
 						<p className="error" role="alert">

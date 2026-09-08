@@ -1,8 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { value } from "@earendil-works/pi-agent-core/harness/session";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { StudioJournal } from "@livi/decorator-agent";
 import type { StudioCommand, StudioCommandResult, StudioSnapshot } from "@livi/decorator-agent/contracts";
 
 const directory = process.argv[2]!;
@@ -11,7 +11,6 @@ const repo = new SqliteSessionRepo({
 	databaseFactory: createNodeSqliteFactory(),
 });
 const session = await repo.create({}, context);
-const journal = new StudioJournal(session);
 const binding = { designId: "restart-design", tabId: "restart-tab" };
 const snapshot: StudioSnapshot = {
 	designId: binding.designId,
@@ -39,9 +38,7 @@ const snapshot: StudioSnapshot = {
 	],
 	selectedObjectIds: ["chair"],
 };
-await journal.setBinding(binding);
-await journal.admit("stopped-operation");
-await journal.plan({ operationId: "stopped-operation", turnId: "turn-1", binding, snapshot, unavailable: null });
+await session.setValue(value("livi.studio.binding"), binding, context);
 const command: StudioCommand = {
 	commandId: JSON.stringify([session.metadata.id, "invocation-1"]),
 	conversationId: session.metadata.id,
@@ -55,14 +52,18 @@ const before = {
 	rotation: snapshot.objects[0]!.rotation,
 	scale: snapshot.objects[0]!.scale,
 };
-await journal.prepare({
+// Seed the old protocol record verbatim in an isolated test database.
+const record = {
 	command,
 	operationId: "stopped-operation",
 	turnId: "turn-1",
 	invocationId: "invocation-1",
 	observedBefore: before,
-});
-await journal.dispatch(command.commandId, new AbortController().signal);
+	state: "outcome_unknown",
+	result: null,
+	createdAt: 1,
+};
+await session.setValue(value("livi.studio.command", command.commandId), record, context);
 const after = { ...before, position: [2, 1, 0] as [number, number, number] };
 const result: StudioCommandResult = {
 	commandId: command.commandId,
@@ -73,6 +74,6 @@ const result: StudioCommandResult = {
 	after,
 };
 // Simulated adapter saves externally; agent has not received this result when killed.
-await writeFile(join(directory, "simulated-adapter.json"), JSON.stringify({ command, result }));
+await writeFile(join(directory, "simulated-adapter.json"), JSON.stringify({ command, result, record }));
 process.send?.({ type: "saved-without-ack", sessionId: session.metadata.id });
 setInterval(() => {}, 1000);

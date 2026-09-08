@@ -167,7 +167,7 @@ if (values.help) {
 		mode: values.mode,
 		provenance: fixture.provenance,
 		sourceDescription: fixture.sourceDescription,
-		persistence: "simulated atomic local JSON; agent journal uses real SQLite",
+		persistence: "simulated atomic local JSON; agent chat uses real SQLite",
 		acceptance:
 			"Real Studio editor/backend and joint issue #7 acceptance pending. Synthetic fixtures do not establish database-export acceptance.",
 		stateDirectory: directory,
@@ -240,9 +240,7 @@ if (values.help) {
 							? fauxAssistantMessage(fauxToolCall(call.name, args), { stopReason: "toolUse" })
 							: fauxAssistantMessage(injected.text);
 					},
-					...(call && !scenario.stop && !scenario.dropReplyAndRestart
-						? [fauxAssistantMessage(injected.text)]
-						: []),
+					...(call && !scenario.stop ? [fauxAssistantMessage(injected.text)] : []),
 				]);
 			}
 			adapter.dropNextReply = Boolean(scenario.dropReplyAndRestart);
@@ -275,7 +273,7 @@ if (values.help) {
 			}
 			if (scenario.dropReplyAndRestart) {
 				await eventually(() => adapter.saveCount > savesBefore, "simulated save before dropped reply");
-				await chat.controller.requestAbort(accepted.operationId, context);
+				await adapter.disconnect();
 			}
 			await eventually(
 				() =>
@@ -302,26 +300,16 @@ if (values.help) {
 				await adapter.connect(server);
 				if (scenario.dropReplyAndRestart) chat = await connectChat(sessionId);
 				await eventually(
-					() => chat!.studio.state.value?.phase === "ready" && !chat!.studio.state.value?.busy,
-					"reconciliation after local state reload",
+					() => chat!.studio.state.value?.phase === "ready",
+					"Studio ready after local state reload",
 				);
 			}
+			if (scenario.stop === "after_dispatch")
+				await eventually(
+					() => emitted.every((command) => Boolean(adapter.results[command.commandId])),
+					"simulated Studio finishes the already-dispatched command after Stop",
+				);
 			const after = adapter.snapshot;
-			await eventually(
-				() =>
-					emitted.every((command) => {
-						const result = adapter.results[command.commandId]?.result;
-						if (result?.status !== "saved" && result?.status !== "rejected") return true;
-						return (
-							chat!.studio.state.value?.actions.some(
-								(action) =>
-									action.commandId === command.commandId &&
-									action.state === (result.status === "saved" ? "committed" : "rejected"),
-							) === true
-						);
-					}),
-				"structured action outcomes hydrated independently of model turn",
-			);
 			const entries = chat.transcript.state.value?.snapshot?.transcript.slice(transcriptBefore) ?? [];
 			const text = entries
 				.flatMap((entry) =>
@@ -336,15 +324,15 @@ if (values.help) {
 			const assertions = assertJson(before, after, scenario.expect.json);
 			if (scenario.dropReplyAndRestart || scenario.reloadAdapterAfter)
 				assertions.push({
-					assertion: "reload reconciles without resubmitting commands",
+					assertion: "reload reads current context without resubmitting commands",
 					passed: adapter.emitted.length === 0,
 					expected: 0,
 					actual: adapter.emitted.length,
 				});
 			assertions.push({
 				assertion: "model turn completed or explicitly stopped",
-				passed: turnResult?.status === (scenario.stop || scenario.dropReplyAndRestart ? "aborted" : "completed"),
-				expected: scenario.stop || scenario.dropReplyAndRestart ? "aborted" : "completed",
+				passed: turnResult?.status === (scenario.stop ? "aborted" : "completed"),
+				expected: scenario.stop ? "aborted" : "completed",
 				actual: turnResult,
 			});
 			const actualCommands = emitted.map((command) => ({
@@ -428,7 +416,6 @@ if (values.help) {
 				text,
 				toolResults,
 				savedResults: emitted.map((command) => adapter.results[command.commandId]?.result),
-				actionState: chat.studio.state.value?.actions,
 				assertions,
 				passed: assertions.every((assertion) => assertion.passed),
 			});

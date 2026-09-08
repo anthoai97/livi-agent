@@ -24,11 +24,9 @@
       }
     },
     {
-      "id": "selected-move",
-      "prompt": "Move the selected chair 0.5 metres to the right.",
-      "selectedObjectIds": [
-        "chair-red-1"
-      ],
+      "id": "named-move",
+      "prompt": "Move the Red chair 0.5 metres to the right.",
+      "selectedObjectIds": [],
       "injected": {
         "text": "Moved the Red chair.",
         "call": {
@@ -170,7 +168,7 @@
           "arguments": {
             "objectId": "chair-red-1"
           },
-          "originalCommandFrom": "selected-move"
+          "originalCommandFrom": "named-move"
         }
       },
       "expect": {
@@ -213,7 +211,7 @@
           "arguments": {
             "objectId": "chair-red-1"
           },
-          "originalCommandFrom": "selected-move"
+          "originalCommandFrom": "named-move"
         }
       },
       "expect": {
@@ -261,7 +259,7 @@
         "chair-red-1"
       ],
       "injected": {
-        "text": "",
+        "text": "Studio disconnected before a result arrived. Check the room before requesting another edit.",
         "call": {
           "name": "move_object",
           "arguments": {
@@ -300,6 +298,49 @@
         ]
       },
       "dropReplyAndRestart": true
+    },
+    {
+      "id": "next-explicit-request",
+      "prompt": "Move the Red chair to [3,1,0] metres.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Moved the Red chair.",
+        "call": {
+          "name": "move_object",
+          "arguments": {
+            "objectId": "chair-red-1",
+            "position": [
+              3,
+              1,
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "move",
+            "objectId": "chair-red-1",
+            "status": "saved",
+            "position": [
+              3,
+              1,
+              0
+            ]
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              3,
+              1,
+              0
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "stop-before-dispatch",

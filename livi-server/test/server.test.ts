@@ -7,10 +7,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { createRemoteServiceBinding } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { value } from "@earendil-works/pi-agent-core/harness/session";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { type ByteTransportFactory, Client, createClientServiceTransport } from "@earendil-works/pi-client";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { readStudioJournal } from "@livi/decorator-agent";
 import {
 	AgentController,
 	SessionDirectory,
@@ -366,7 +366,7 @@ test(
 );
 
 test(
-	"startup reconciles an unopened conversation after simulated remote save and process death",
+	"old unresolved history survives restart without locking or reconciling the room",
 	{ timeout: 30_000 },
 	async (t) => {
 		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-studio-restart-"));
@@ -386,6 +386,7 @@ test(
 		const evidence = JSON.parse(await readFile(join(dataDirectory, "simulated-adapter.json"), "utf8")) as {
 			command: StudioCommand;
 			result: Extract<StudioCommandResult, { status: "saved" }>;
+			record: unknown;
 		};
 		const server = await startLiviServer({ dataDirectory, port: 0 });
 		const client = await Client.connect({ serverId: server.serverId, transportFactory: transport(server.port) });
@@ -402,31 +403,13 @@ test(
 		const directory = remote.use(StudioDirectory);
 		await remote.ready(context);
 		const { generation } = await studio.register(
-			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 1 },
+			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 2 },
 			context,
 		);
 		await studio.ready(generation, context);
-		await eventually(() => studio.mailbox.value?.requests[0]?.type === "context");
-		const fresh = studio.mailbox.value!.requests[0]!;
-		await studio.respond(
-			{
-				requestId: fresh.requestId,
-				generation,
-				type: "context",
-				context: { generation, sequence: 0, snapshot: evidence.result.snapshot },
-			},
-			context,
-		);
-		await eventually(() => studio.mailbox.value?.requests[0]?.type === "status");
-		const status = studio.mailbox.value!.requests[0]!;
-		assert.equal(status.type, "status");
-		if (status.type === "status") assert.equal(status.commandId, evidence.command.commandId);
-		await studio.respond(
-			{ requestId: status.requestId, generation, type: "result", result: evidence.result },
-			context,
-		);
+		await studio.publishContext({ generation, sequence: 0, snapshot: evidence.result.snapshot }, context);
 		await eventually(() => directory.state.value?.studios[0]?.phase === "ready");
-		assert.deepEqual(studio.mailbox.value!.requests, [], "Reconciliation must never resend the mutation");
+		assert.deepEqual(studio.mailbox.value!.requests, [], "Restart must neither query old status nor resend an edit");
 		await remote.dispose(context);
 		await client.dispose();
 		await server.close();
@@ -436,11 +419,11 @@ test(
 		});
 		const metadata = (await repo.list(undefined, context)).find((item) => item.id === saved.sessionId)!;
 		const session = await repo.open(metadata, context);
-		const journal = await readStudioJournal(session);
-		assert.deepEqual(journal.binding, evidence.command.binding);
-		assert.equal(journal.records.length, 1);
-		assert.equal(journal.records[0]!.state, "committed");
-		assert.deepEqual(journal.records[0]!.result, evidence.result);
+		const binding = await session.getValue(value("livi.studio.binding"), context);
+		const records = await session.scanValues(value("livi.studio.command", ""), context);
+		assert.deepEqual(binding?.value, evidence.command.binding);
+		assert.equal(records.length, 1);
+		assert.deepEqual(records[0]!.value, evidence.record, "Historical uncertainty must remain untouched");
 		await session.close(context);
 		await repo.close(context);
 	},
