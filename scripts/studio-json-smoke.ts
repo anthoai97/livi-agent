@@ -231,7 +231,7 @@ if (values.help) {
 					async (request) => {
 						assert.deepEqual(
 							request.tools?.map((tool) => tool.name).sort(),
-							["move_object", "remove_object", "rotate_object"],
+							["get_room_context", "move_object", "remove_object", "rotate_object"],
 							"Exactly the supported tools must be active on each new generation",
 						);
 						modelStarted.resolve();

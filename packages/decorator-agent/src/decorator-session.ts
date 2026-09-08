@@ -134,7 +134,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 					tools,
 					activeToolNames: tools.map((tool) => tool.name),
 					toolExecution: "sequential",
-					toolContext: async () => ({ studio, planning: await studio.context() }),
+					toolContext: async (context) => ({ studio, planning: await studio.context(undefined, context) }),
 					resources: {},
 					systemPrompt: studioSystemPrompt,
 					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
