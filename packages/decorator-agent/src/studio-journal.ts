@@ -36,6 +36,7 @@ const admissionAddress = (operationId: string) => value<StudioBinding | null>("l
 const planningAddress = (operationId: string, turnId: string) =>
 	value<StudioPlanningSnapshot>("livi.studio.planning", JSON.stringify([operationId, turnId]));
 const commandAddress = (commandId: string) => value<StudioCommandRecord>("livi.studio.command", commandId);
+const mutationBlockAddress = (operationId: string) => value<boolean>("livi.studio.mutation_block", operationId);
 
 /** Inventory through the repository's existing owner; never opens a second Session writer. */
 export async function readStudioJournal(reader: SessionReader, context: Context = BACKGROUND_CONTEXT) {
@@ -66,6 +67,28 @@ export class StudioJournal {
 	readonly session: Session;
 	constructor(session: Session) {
 		this.session = session;
+	}
+
+	async mutationBlocked(operationId: string): Promise<boolean> {
+		return (await this.session.getValue(mutationBlockAddress(operationId), BACKGROUND_CONTEXT))?.value === true;
+	}
+
+	/** A failed reversal requires a new user request, never a model-generated coordinate fallback. */
+	async blockMutations(operationId: string): Promise<void> {
+		await this.session.mutate(async (writer) => {
+			const records = await writer.scanValues(commandAddress(""), BACKGROUND_CONTEXT);
+			await writer.commit(
+				[
+					setValue(mutationBlockAddress(operationId), true),
+					...records
+						.filter(({ value: record }) => record.operationId === operationId && record.state === "prepared")
+						.map(({ address, value: record }) =>
+							setValue(address, { ...record, state: "cancelled_before_send" as const }),
+						),
+				],
+				BACKGROUND_CONTEXT,
+			);
+		}, BACKGROUND_CONTEXT);
 	}
 
 	async binding(context: Context = BACKGROUND_CONTEXT): Promise<StudioBinding | null> {
@@ -135,6 +158,10 @@ export class StudioJournal {
 					throw new Error("Command identity conflict");
 				return existing.value;
 			}
+			if ((await writer.getValue(mutationBlockAddress(record.operationId), context))?.value)
+				throw new Error(
+					"reversal_blocked: A reversal failed in this request. Do not fall back to absolute coordinates or another mutation; explain the conflict and wait for a new user prompt",
+				);
 			const planning = await writer.getValue(planningAddress(record.operationId, record.turnId), context);
 			const admission = await writer.getValue(admissionAddress(record.operationId), context);
 			if (

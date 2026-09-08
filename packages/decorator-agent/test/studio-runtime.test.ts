@@ -655,6 +655,165 @@ it("refuses reversal after a manual object change", async () => {
 	expect(fake.state.snapshot.objects[0]?.position).toEqual([2, 2, 0]);
 });
 
+it.each(["invalid-reference", "manual-conflict"])(
+	"blocks direct mutation fallbacks after a failed reversal (%s), until a new user operation",
+	async (failure) => {
+		const { runtime, fake, faux } = await fixture();
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Moved"),
+		]);
+		await prompt(runtime);
+		await runtime.lane.waitForIdle(context);
+		const original = (await runtime.studio.journal.records())[0]!;
+		fake.state.snapshot.objects[0]!.position = [4, 2, 0];
+		fake.state.snapshot.revision = "3";
+		const before = structuredClone(fake.state.snapshot);
+		faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("move_object", {
+					objectId: "chair-1",
+					originalCommandId: failure === "invalid-reference" ? "invented-reference" : original.command.commandId,
+				}),
+				{ stopReason: "toolUse" },
+			),
+			(input) => {
+				expect(input.systemPrompt).toContain("Current request reversal block: true");
+				return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [1, 2, 0] }), {
+					stopReason: "toolUse",
+				});
+			},
+			fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(fauxToolCall("remove_object", { objectId: "chair-1" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("The reversal failed. Please clarify before another room action."),
+		]);
+		const blockedOperation = await prompt(runtime, "Reverse the move; do not overwrite manual edits");
+		await runtime.lane.waitForIdle(context);
+		expect(await runtime.studio.journal.mutationBlocked(blockedOperation)).toBe(true);
+		expect(fake.state.snapshot).toEqual(before);
+		expect(fake.state.commands).toHaveLength(1);
+		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+		expect(
+			entries.filter(
+				(entry) =>
+					entry.type === "message" &&
+					entry.message.role === "toolResult" &&
+					entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
+			),
+		).toHaveLength(3);
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [3, 2, 0] }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("New explicit move saved"),
+		]);
+		const nextOperation = await prompt(runtime, "Make a new move to [3,2,0]");
+		await runtime.lane.waitForIdle(context);
+		expect(nextOperation).not.toBe(blockedOperation);
+		expect(await runtime.studio.journal.mutationBlocked(nextOperation)).toBe(false);
+		expect(fake.state.commands).toHaveLength(2);
+		expect(fake.state.snapshot.objects[0]?.position).toEqual([3, 2, 0]);
+	},
+);
+
+it("retains the failed-reversal fence when a fallback call replays after restart", async () => {
+	const { runtime, fake, faux, repo, stored, broker, models } = await fixture();
+	const entered = Promise.withResolvers<void>();
+	const terminated = Promise.withResolvers<void>();
+	vi.spyOn(runtime.studio, "prepare").mockImplementation(async () => {
+		entered.resolve();
+		await terminated.promise;
+		throw new Error("Simulated process loss before fallback admission");
+	});
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("move_object", { objectId: "chair-1", originalCommandId: "invented-reference" }),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [4, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+	]);
+	const operationId = await prompt(runtime, "Reverse the move");
+	await entered.promise;
+	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(true);
+	await runtime.close();
+	terminated.resolve();
+	fake.state.session = await repo.open(stored.metadata, context);
+	faux.setResponses([fauxAssistantMessage("Reversal conflict retained; waiting for clarification")]);
+	const recovered = await DecoratorSession.create({ session: fake.state.session, studio: broker, models });
+	cleanup.push(() => recovered.close());
+	await recovered.lane.waitForIdle(context);
+	expect(await recovered.studio.journal.mutationBlocked(operationId)).toBe(true);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot).toEqual(room());
+	const entries = await recovered.lane.findEntries({ order: "oldestFirst" }, context);
+	expect(
+		entries.some(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "toolResult" &&
+				entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
+		),
+	).toBe(true);
+});
+
+it("persists the reversal fence before later mutations in the same model tool batch can dispatch", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(
+			[
+				fauxToolCall("move_object", { objectId: "chair-1", originalCommandId: "invented-reference" }),
+				fauxToolCall("move_object", { objectId: "chair-1", position: [4, 2, 0] }),
+				fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }),
+				fauxToolCall("remove_object", { objectId: "chair-1" }),
+			],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Reversal failed; the batch made no room changes"),
+	]);
+	const operationId = await prompt(runtime, "Reverse the move");
+	await runtime.lane.waitForIdle(context);
+	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(true);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot).toEqual(room());
+	expect(await runtime.studio.journal.records()).toEqual([]);
+	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+	expect(
+		entries.filter(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "toolResult" &&
+				entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
+		),
+	).toHaveLength(3);
+});
+
+it("still permits ordinary stale non-reversal replanning within the same operation", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		() => {
+			fake.state.snapshot.revision = "2";
+			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			});
+		},
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [3, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Replanned move saved"),
+	]);
+	const operationId = await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(false);
+	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "2"]);
+	expect(fake.state.snapshot.objects[0]?.position).toEqual([3, 2, 0]);
+});
+
 it("replays tools after an assistant was saved before the journal using the original durable planning snapshot", async () => {
 	const { runtime, fake, faux, stored, repo, broker, models } = await fixture();
 	const entered = Promise.withResolvers<void>();
