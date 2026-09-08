@@ -26,6 +26,10 @@ pnpm start
 
 Open http://127.0.0.1:3001. Node serves the built frontend, API, and WebSocket endpoint. This prototype has no login system and is intended for local use.
 
+For debug logs, set `LIVI_DEBUG=1` in your existing `.env` and restart the server. Logs describe subsequent activity; they do not reconstruct earlier requests. Each JSON line goes to the server terminal (stderr), with a timestamp, event, and relevant session, operation, turn, invocation, or command IDs. Chat lifecycle, tool arguments and outcomes, context source/revision/object count, mutation blocks, and connection origin rejections help trace a failed action. Context logs omit full room geometry; credentials, auth headers, provider thinking/signatures, raw model payloads, and prompt text are excluded. Treat logs as private because they include object IDs and action arguments. Remove the flag or set it to `0` to disable diagnostic output.
+
+Optionally capture the built server's output with `pnpm start 2>&1 | tee /tmp/livi-debug.log` after building. Restart only when ready; changing `.env` alone does not enable logs in an already running process.
+
 ## Checks
 
 ```sh
