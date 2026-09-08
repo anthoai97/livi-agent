@@ -28,4 +28,3 @@ Stop ends the response and prevents unsent work. Already sent edits may still sa
 
 The companion adapter uses its normal editor save path and supplies the result. No backend command-history protocol is required. JSON adapter saves are simulated; real editor/backend acceptance requires companion integration evidence.
 
-The existing snapshot shape still requires encodable opening fields. A room with a missing/nullable window sill can save in Studio while its result snapshot fails encoding; the agent then receives no result. Protocol 2 does not add a fallback snapshot schema or recover that missing acknowledgement.
