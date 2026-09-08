@@ -29,6 +29,7 @@ export interface DecoratorSessionOptions {
 	modelId?: string;
 	apiKey?: string;
 	onError?: (error: Error) => void;
+	onDebug?: (event: string, fields: Record<string, unknown>) => void;
 	studio?: StudioBroker;
 }
 
@@ -64,6 +65,11 @@ export class DecoratorSession implements RoutedSessionHandle {
 					try {
 						const admitted = await lane.accept({ kind: "prompt", operationId, prompt: request.message }, context);
 						if (!admitted.ok) await studio.journal.discardAdmission(operationId);
+						studio.debug(admitted.ok ? "chat.accepted" : "chat.rejected", {
+							operationId,
+							messageLength: request.message.length,
+							errorCode: admitted.ok ? undefined : admitted.error._tag,
+						});
 						return admitted;
 					} catch (error) {
 						// Admission may have committed even if its caller stopped waiting. Keep its pinned binding then.
@@ -92,6 +98,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 			requestAbort: async (operationId, context) => {
 				const result = await lane.requestAbort(operationId, context);
 				if (!result.ok) throw result.error;
+				studio.debug("chat.abort_requested", { operationId });
 				await studio.journal.cancelPrepared(operationId);
 				await studio.publish();
 				this.startDrive(operationId);
@@ -120,7 +127,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 		}
 		const model = registry.getModel("google", options.modelId ?? "gemini-3.5-flash-lite");
 		if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-3.5-flash-lite"}`);
-		const studio = new StudioSessionRuntime(options.session, options.studio);
+		const studio = new StudioSessionRuntime(options.session, options.studio, options.onDebug);
 		let harness: AgentHarness<StudioToolContext> | undefined;
 		let runtime: DecoratorSession | undefined;
 		try {
@@ -154,6 +161,11 @@ export class DecoratorSession implements RoutedSessionHandle {
 			await runtime.transcript.activate();
 			for (const operation of open) {
 				await studio.journal.blockMutations(operation.operationId);
+				studio.debug("mutation.blocked", {
+					operationId: operation.operationId,
+					mutationBlocked: true,
+					cause: "recovered_operation",
+				});
 				runtime.startDrive(operation.operationId);
 			}
 			return runtime;
@@ -172,8 +184,21 @@ export class DecoratorSession implements RoutedSessionHandle {
 			.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT)
 			.then((result) => {
 				if (!result.ok) throw result.error;
+				if (result.value.kind === "settled") {
+					const { status, error } = result.value.outcome;
+					this.studio.debug(status === "aborted" ? "chat.aborted" : "chat.finished", {
+						operationId,
+						status,
+						errorCode: error?.code,
+					});
+				}
 			})
 			.catch((error: unknown) => {
+				this.studio.debug("chat.error", {
+					operationId,
+					cause: this.closing ? "session_closing" : "drive_failed",
+					errorType: error instanceof Error ? error.name : "NonError",
+				});
 				if (!(this.closing && error instanceof HarnessClosed))
 					this.onError(error instanceof Error ? error : new Error(String(error)));
 			})

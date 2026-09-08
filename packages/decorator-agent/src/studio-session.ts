@@ -21,9 +21,15 @@ export class StudioSessionRuntime {
 	private refreshed?: StudioPlanningSnapshot;
 	readonly session: Session;
 	readonly broker: StudioBroker | undefined;
+	private readonly onDebug?: (event: string, fields: Record<string, unknown>) => void;
 
-	constructor(session: Session, broker?: StudioBroker) {
+	constructor(
+		session: Session,
+		broker?: StudioBroker,
+		onDebug?: (event: string, fields: Record<string, unknown>) => void,
+	) {
 		this.session = session;
+		this.onDebug = onDebug;
 		this.broker = broker;
 		this.journal = new StudioJournal(session);
 		this.service = {
@@ -36,6 +42,14 @@ export class StudioSessionRuntime {
 					await this.publish();
 				}),
 		};
+	}
+
+	debug(event: string, fields: Record<string, unknown>): void {
+		try {
+			this.onDebug?.(event, { sessionId: this.session.metadata.id, ...fields });
+		} catch {
+			// Diagnostics must never change room or chat behavior.
+		}
 	}
 
 	exclusive<T>(action: () => Promise<T>): Promise<T> {
@@ -95,7 +109,17 @@ export class StudioSessionRuntime {
 			throw new Error("studio_unavailable: Missing active room operation");
 		if (!identity) return undefined;
 		const existing = await this.journal.planning(identity.operationId, identity.turnId);
-		if (!invocation && (existing || !identity.planning)) return existing;
+		if (!invocation && (existing || !identity.planning)) {
+			this.debug("context.ready", {
+				operationId: identity.operationId,
+				turnId: identity.turnId,
+				source: "planning",
+				revision: existing?.snapshot?.revision,
+				objectCount: existing?.snapshot?.objects.length,
+				available: !!existing?.snapshot,
+			});
+			return existing;
+		}
 		const admission = await this.journal.admission(identity.operationId);
 		const binding = admission?.value ?? null;
 		const refreshed =
@@ -131,6 +155,15 @@ export class StudioSessionRuntime {
 			snapshot,
 			unavailable,
 		};
+		this.debug("context.ready", {
+			operationId: identity.operationId,
+			turnId: identity.turnId,
+			invocationId: invocation?.invocationId,
+			source: refreshed ? "refresh" : "studio",
+			revision: snapshot?.revision,
+			objectCount: snapshot?.objects.length,
+			available: !!snapshot,
+		});
 		if (invocation) {
 			if (!snapshot) throw new Error(`studio_unavailable: ${unavailable}`);
 			// Only the next model generation may plan against this evidence, never this tool batch.
@@ -156,7 +189,17 @@ export class StudioSessionRuntime {
 				message: `No result received from Studio: ${error instanceof Error ? error.message : String(error)}`,
 			};
 		}
-		if (result.status === "unknown") await this.journal.blockMutations(record.operationId);
+		if (result.status === "unknown") {
+			await this.journal.blockMutations(record.operationId);
+			this.debug("mutation.blocked", {
+				operationId: record.operationId,
+				turnId: record.turnId,
+				invocationId: record.invocationId,
+				commandId: record.command.commandId,
+				mutationBlocked: true,
+				cause: "outcome_unknown",
+			});
+		}
 		return this.journal.settle(result);
 	}
 

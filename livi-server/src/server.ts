@@ -10,6 +10,7 @@ import { Server, type ServerHost, SessionNotFoundError } from "@earendil-works/p
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
 import { createServerServices, DecoratorSession, StudioBroker } from "@livi/decorator-agent";
 import { WebSocket, WebSocketServer } from "ws";
+import { createDebugLogger } from "./debug.js";
 
 export interface LiviServerOptions {
 	dataDirectory?: string;
@@ -21,9 +22,21 @@ export interface LiviServerOptions {
 	apiKey?: string;
 	onError?: (error: Error) => void;
 	studioAllowedOrigins?: string[];
+	debug?: boolean;
+}
+
+function debugOrigin(origin: string | undefined) {
+	if (!origin) return null;
+	try {
+		const parsed = new URL(origin);
+		return ["http:", "https:"].includes(parsed.protocol) ? parsed.origin : "invalid";
+	} catch {
+		return "invalid";
+	}
 }
 
 export async function startLiviServer(options: LiviServerOptions = {}) {
+	const onDebug = createDebugLogger(options.debug === true);
 	const studioOrigins = new Set(
 		(options.studioAllowedOrigins ?? []).map((origin) => {
 			const parsed = new URL(origin);
@@ -82,6 +95,7 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 					modelId: options.modelId,
 					apiKey: options.apiKey,
 					onError: reportError,
+					onDebug,
 					studio,
 				});
 			} catch (error) {
@@ -110,6 +124,7 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 					origin !== `http://${request.headers.host}` &&
 					origin !== `https://${request.headers.host}`
 				) {
+					onDebug?.("bootstrap.rejected", { origin: debugOrigin(origin), reason: "origin_not_allowed" });
 					response.writeHead(403).end();
 					return;
 				}
@@ -170,7 +185,10 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		});
 	});
 	http.on("upgrade", (request, socket, head) => {
+		const connectionId = randomUUID();
+		const connectionFields = { connectionId, origin: debugOrigin(request.headers.origin) };
 		if (request.url !== "/ws") {
+			onDebug?.("connection.rejected", { ...connectionFields, reason: "invalid_path" });
 			socket.destroy();
 			return;
 		}
@@ -179,15 +197,18 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		if (origin) {
 			try {
 				if (new URL(origin).host !== request.headers.host && !studioOrigins.has(origin)) {
+					onDebug?.("connection.rejected", { ...connectionFields, reason: "origin_not_allowed" });
 					socket.destroy();
 					return;
 				}
 			} catch {
+				onDebug?.("connection.rejected", { ...connectionFields, reason: "invalid_origin" });
 				socket.destroy();
 				return;
 			}
 		}
 		sockets.handleUpgrade(request, socket, head, (websocket) => {
+			onDebug?.("connection.accepted", connectionFields);
 			const handler = protocol.accept({
 				get closed() {
 					return websocket.readyState !== WebSocket.OPEN;

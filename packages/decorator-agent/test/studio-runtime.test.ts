@@ -184,7 +184,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 	};
 }
 
-async function fixture() {
+async function fixture(onDebug?: (event: string, fields: Record<string, unknown>) => void) {
 	const repo = new MemorySessionRepo();
 	cleanup.push(() => repo.close(context));
 	const stored = await repo.create({}, context);
@@ -199,6 +199,7 @@ async function fixture() {
 		models,
 		studio: broker,
 		onError: (error) => errors.push(error),
+		onDebug,
 	});
 	cleanup.push(async () => {
 		await broker.close();
@@ -234,7 +235,8 @@ it("sends Gemini numeric-array schemas instead of unsupported tuple item arrays"
 });
 
 it("refreshes a rejected stale move and recomputes from the new position in the same operation", async () => {
-	const { runtime, fake, faux, broker } = await fixture();
+	const events: Record<string, unknown>[] = [];
+	const { runtime, fake, faux, broker } = await fixture((event, fields) => events.push({ event, ...fields }));
 	const fresh = vi.spyOn(broker, "freshContext");
 	const prepare = vi.spyOn(runtime.studio, "prepare");
 	fake.state.snapshot.selectedObjectIds = [];
@@ -281,6 +283,25 @@ it("refreshes a rejected stale move and recomputes from the new position in the 
 	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(entries.filter((entry) => entry.type === "message" && entry.message.role === "user")).toHaveLength(1);
 	expect((await runtime.studio.journal.records())[0]?.state).toBe("committed");
+	expect(events).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({ event: "tool.result", operationId, status: "rejected" }),
+			expect.objectContaining({
+				event: "tool.error",
+				operationId,
+				errorCode: "stale_revision",
+				mutationBlocked: false,
+			}),
+			expect.objectContaining({
+				event: "context.ready",
+				operationId,
+				source: "refresh",
+				revision: "2",
+				objectCount: 2,
+			}),
+			expect.objectContaining({ event: "tool.result", operationId, status: "saved", revision: "3" }),
+		]),
+	);
 });
 
 it("does not rebase precomputed actions in the refresh batch", async () => {
@@ -330,7 +351,8 @@ it("refuses refresh after the conversation attachment changes", async () => {
 });
 
 it("cancels an in-flight explicit refresh without sending the next batch action", async () => {
-	const { runtime, fake, faux } = await fixture();
+	const events: Record<string, unknown>[] = [];
+	const { runtime, fake, faux } = await fixture((event, fields) => events.push({ event, ...fields }));
 	faux.setResponses([
 		() => {
 			fake.state.holdContext = true;
@@ -350,6 +372,9 @@ it("cancels an in-flight explicit refresh without sending the next batch action"
 	expect(await runtime.lane.getResult(operationId, context)).toMatchObject({ status: "aborted" });
 	expect(fake.connection.service.mailbox.value!.requests).toEqual([]);
 	expect(fake.state.commands).toEqual([]);
+	expect(events).toEqual(
+		expect.arrayContaining([expect.objectContaining({ event: "chat.aborted", operationId, status: "aborted" })]),
+	);
 });
 
 it("moves, rotates, and reverses completed actions across reopen", async () => {
@@ -667,6 +692,157 @@ it.each([
 	expect(await runtime.studio.journal.records()).toEqual([]);
 });
 
+it("traces an invalid reversal and its blocked fallback without leaking model or room payloads", async () => {
+	const events: Record<string, unknown>[] = [];
+	const { runtime, fake, faux, stored } = await fixture((event, fields) => events.push({ event, ...fields }));
+	fake.state.snapshot.objects[0]!.name = "private-room-object-marker";
+	faux.setResponses([
+		fauxAssistantMessage(
+			[
+				{ type: "thinking", thinking: "private-thinking-marker", thinkingSignature: "private-signature-marker" },
+				fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }),
+			],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("private-model-response-marker"),
+	]);
+	const message = "private-user-prompt-marker";
+	const savedOperationId = await prompt(runtime, message);
+	await runtime.lane.waitForIdle(context);
+	const original = (await runtime.studio.journal.records())[0]!;
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("move_object", { objectId: "chair-2", originalCommandId: original.command.commandId }),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-2", position: [4, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Cannot reverse a different object"),
+	]);
+	const blockedOperationId = await prompt(runtime, "Reverse the other chair");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	const reversal = events.find((entry) => entry.event === "tool.error" && entry.errorCode === "invalid_target");
+	expect(reversal).toMatchObject({
+		sessionId: stored.metadata.id,
+		operationId: blockedOperationId,
+		turnId: expect.any(String),
+		invocationId: expect.any(String),
+		commandId: expect.any(String),
+		toolName: "move_object",
+		mutationBlocked: true,
+		reason: "original_object_mismatch",
+		requestedObjectId: "chair-2",
+		originalObjectId: "chair-1",
+		originalAction: "move",
+		originalState: "committed",
+		originalStatus: "saved",
+		originalCommandId: original.command.commandId,
+	});
+	const correlation = {
+		sessionId: stored.metadata.id,
+		operationId: blockedOperationId,
+		turnId: reversal!.turnId,
+		invocationId: reversal!.invocationId,
+		commandId: reversal!.commandId,
+	};
+	expect(events).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				event: "chat.accepted",
+				operationId: savedOperationId,
+				messageLength: message.length,
+			}),
+			expect.objectContaining({
+				event: "tool.start",
+				...correlation,
+				toolName: "move_object",
+				arguments: { objectId: "chair-2", originalCommandId: original.command.commandId },
+			}),
+			expect.objectContaining({
+				event: "mutation.blocked",
+				...correlation,
+				cause: "reversal_failed",
+				errorCode: "invalid_target",
+				mutationBlocked: true,
+			}),
+			expect.objectContaining({
+				event: "context.ready",
+				operationId: blockedOperationId,
+				source: "refresh",
+				revision: "2",
+				objectCount: 2,
+			}),
+			expect.objectContaining({
+				event: "tool.result",
+				toolName: "get_room_context",
+				operationId: blockedOperationId,
+				mutationBlocked: true,
+			}),
+		]),
+	);
+	const fallback = events.find((entry) => entry.event === "tool.error" && entry.errorCode === "mutation_blocked");
+	expect(fallback).toMatchObject({ operationId: blockedOperationId, toolName: "move_object", mutationBlocked: true });
+	expect(fallback!.invocationId).not.toBe(reversal!.invocationId);
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-2", position: [4, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Saved the new request"),
+	]);
+	const nextOperationId = await prompt(runtime, "Move chair-2 now");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(2);
+	expect(events).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				event: "tool.result",
+				operationId: nextOperationId,
+				status: "saved",
+				state: "committed",
+				revision: "3",
+			}),
+			expect.objectContaining({ event: "chat.finished", operationId: blockedOperationId, status: "completed" }),
+		]),
+	);
+	const serialized = JSON.stringify(events);
+	for (const privateValue of [
+		message,
+		"private-room-object-marker",
+		"private-thinking-marker",
+		"private-signature-marker",
+		"private-model-response-marker",
+		'"geometry"',
+		'"snapshot"',
+		'"systemPrompt"',
+	])
+		expect(serialized).not.toContain(privateValue);
+});
+
+it("logs a provider failure code without its raw error text", async () => {
+	const events: Record<string, unknown>[] = [];
+	const { runtime, faux, fake, stored } = await fixture((event, fields) => events.push({ event, ...fields }));
+	const secret = "private-provider-error-marker";
+	faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: secret })]);
+	const operationId = await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(events).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				event: "chat.finished",
+				sessionId: stored.metadata.id,
+				operationId,
+				status: "failed",
+				errorCode: "assistant_error",
+			}),
+		]),
+	);
+	expect(JSON.stringify(events)).not.toContain(secret);
+	expect(fake.state.commands).toEqual([]);
+});
+
 it("refuses reversal after a manual object change", async () => {
 	const { runtime, fake, faux } = await fixture();
 	faux.setResponses([
@@ -701,7 +877,8 @@ it("refuses reversal after a manual object change", async () => {
 });
 
 it("reports a lost reply once, refuses a model retry, and permits the next explicit user edit", async () => {
-	const { runtime, fake, faux } = await fixture();
+	const events: Record<string, unknown>[] = [];
+	const { runtime, fake, faux } = await fixture((event, fields) => events.push({ event, ...fields }));
 	fake.state.hold = true;
 	faux.setResponses([
 		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
@@ -736,6 +913,12 @@ it("reports a lost reply once, refuses a model retry, and permits the next expli
 	await prompt(runtime, "Rotate the chair now");
 	await runtime.lane.waitForIdle(context);
 	expect(fake.state.commands.map((command) => command.action.type)).toEqual(["move", "rotate"]);
+	expect(events).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({ event: "tool.result", status: "unknown" }),
+			expect.objectContaining({ event: "tool.error", errorCode: "outcome_unknown", mutationBlocked: true }),
+		]),
+	);
 });
 
 it("Stop after dispatch leaves no room lock and a new user request can save", async () => {

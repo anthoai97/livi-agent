@@ -56,6 +56,23 @@ function sameTransform(left: StudioTransform, right: StudioTransform): boolean {
 	);
 }
 
+function errorCode(error: unknown): string {
+	const code = error instanceof Error ? error.message.split(":", 1)[0] : undefined;
+	return code &&
+		[
+			"studio_unavailable",
+			"wrong_binding",
+			"invalid_target",
+			"invalid_arguments",
+			"stale_revision",
+			"save_rejected",
+			"outcome_unknown",
+			"mutation_blocked",
+		].includes(code)
+		? code
+		: "tool_failed";
+}
+
 async function execute(
 	type: StudioAction["type"],
 	objectId: string,
@@ -65,10 +82,26 @@ async function execute(
 	invocation: AgentHarnessToolInvocation,
 	context: Context,
 ) {
+	const commandId = JSON.stringify([studio.session.metadata.id, invocation.invocationId]);
+	const identity = {
+		operationId: invocation.operationId,
+		turnId: invocation.turnId,
+		invocationId: invocation.invocationId,
+		commandId,
+		toolName: `${type}_object`,
+	};
+	let rejection: Record<string, unknown> | undefined;
+	studio.debug("tool.start", {
+		...identity,
+		arguments: {
+			objectId,
+			...(type === "move" ? { position: target } : type === "rotate" ? { rotation: target } : {}),
+			originalCommandId,
+		},
+	});
 	try {
 		if (await studio.journal.mutationBlocked(invocation.operationId))
 			throw new Error("mutation_blocked: No further room actions in this request; wait for a new user prompt");
-		const commandId = JSON.stringify([studio.session.metadata.id, invocation.invocationId]);
 		let record = await studio.journal.get(commandId);
 		if (!record) {
 			if (
@@ -98,10 +131,32 @@ async function execute(
 					original.command.objectId !== objectId ||
 					original.command.action.type !== type ||
 					!original.result.after
-				)
+				) {
+					rejection = {
+						reason: !original
+							? "original_not_found"
+							: original.state !== "committed" || original.result?.status !== "saved"
+								? "original_not_saved"
+								: original.command.conversationId !== studio.session.metadata.id
+									? "original_conversation_mismatch"
+									: original.command.binding.designId !== planning.binding.designId
+										? "original_design_mismatch"
+										: original.command.objectId !== objectId
+											? "original_object_mismatch"
+											: original.command.action.type !== type
+												? "original_action_mismatch"
+												: "original_after_missing",
+						requestedObjectId: objectId,
+						originalCommandId,
+						originalObjectId: original?.command.objectId,
+						originalAction: original?.command.action.type,
+						originalState: original?.state,
+						originalStatus: original?.result?.status,
+					};
 					throw new Error(
 						"invalid_target: Reference a saved move or rotation for this object and action; removal cannot be reversed",
 					);
+				}
 				if (!sameTransform(object, original.result.after))
 					throw new Error(
 						"stale_revision: This object changed after the original action; clarify instead of overwriting its current transform",
@@ -134,6 +189,13 @@ async function execute(
 			});
 		}
 		record = await studio.execute(record, context);
+		studio.debug("tool.result", {
+			...identity,
+			state: record.state,
+			status: record.result?.status ?? record.state,
+			revision: record.result?.status === "saved" ? record.result.revision : undefined,
+			errorCode: record.result?.status === "rejected" ? record.result.error.code : undefined,
+		});
 		if (record.state !== "committed" || record.result?.status !== "saved") {
 			if (record.result?.status === "rejected")
 				throw new Error(`${record.result.error.code}: ${record.result.error.message}`);
@@ -153,7 +215,21 @@ async function execute(
 			details: { commandId, state: record.state, result: record.result },
 		};
 	} catch (error) {
-		if (originalCommandId !== undefined) await studio.journal.blockMutations(invocation.operationId);
+		if (originalCommandId !== undefined) {
+			await studio.journal.blockMutations(invocation.operationId);
+			studio.debug("mutation.blocked", {
+				...identity,
+				mutationBlocked: true,
+				cause: "reversal_failed",
+				errorCode: errorCode(error),
+			});
+		}
+		studio.debug("tool.error", {
+			...identity,
+			...rejection,
+			errorCode: errorCode(error),
+			mutationBlocked: await studio.journal.mutationBlocked(invocation.operationId),
+		});
 		throw error;
 	}
 }
@@ -196,8 +272,31 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 		description:
 			"Read the attached Studio's latest room snapshot and inventory. After a rejected stale ordinary action, inspect this result and recalculate in the next generation. Calls already in this batch retain their original planning revision. Refresh never clears mutation blocks or authorizes retrying unknown outcomes or failed reversals.",
 		execute: async (_id, _args, _update, { studio }, invocation, context) => {
-			const planning = await studio.context(invocation, context);
-			return { content: [{ type: "text", text: JSON.stringify(planning) }], details: planning };
+			const identity = {
+				operationId: invocation.operationId,
+				turnId: invocation.turnId,
+				invocationId: invocation.invocationId,
+				toolName: "get_room_context",
+			};
+			studio.debug("tool.start", { ...identity, arguments: {} });
+			try {
+				const planning = await studio.context(invocation, context);
+				studio.debug("tool.result", {
+					...identity,
+					status: "ready",
+					revision: planning?.snapshot?.revision,
+					objectCount: planning?.snapshot?.objects.length,
+					mutationBlocked: await studio.journal.mutationBlocked(invocation.operationId),
+				});
+				return { content: [{ type: "text", text: JSON.stringify(planning) }], details: planning };
+			} catch (error) {
+				studio.debug("tool.error", {
+					...identity,
+					errorCode: errorCode(error),
+					mutationBlocked: await studio.journal.mutationBlocked(invocation.operationId),
+				});
+				throw error;
+			}
 		},
 	};
 	return [move, rotate, remove, refresh];
