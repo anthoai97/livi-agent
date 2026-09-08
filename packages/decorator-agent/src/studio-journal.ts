@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type Session, value } from "@earendil-works/pi-agent-core/harness/session";
+import type { AgentPromptAction } from "./services/agent-controller.ts";
 import type {
 	StudioBinding,
 	StudioCommand,
@@ -9,12 +10,18 @@ import type {
 	StudioTransform,
 } from "./services/studio.ts";
 
+export interface StudioAdmission {
+	value: StudioBinding | null;
+	action: AgentPromptAction | null;
+}
+
 export interface StudioPlanningSnapshot {
 	operationId: string;
 	turnId: string;
 	binding: StudioBinding | null;
 	snapshot: StudioSnapshot | null;
 	unavailable: string | null;
+	action: AgentPromptAction | null;
 }
 
 export interface StudioCommandRecord {
@@ -29,12 +36,13 @@ export interface StudioCommandRecord {
 }
 
 const bindingAddress = value<StudioBinding | null>("livi.studio.binding");
+const admissionAddress = (operationId: string) => value<StudioAdmission>("livi.studio.operation", operationId);
 const commandAddress = (commandId: string) => value<StudioCommandRecord>("livi.studio.command", commandId);
 
 /** Current-request context is transient; completed results persist only for conversational undo. */
 export class StudioJournal {
 	readonly session: Session;
-	private readonly admissions = new Map<string, { value: StudioBinding | null }>();
+	private readonly admissions = new Map<string, StudioAdmission>();
 	private readonly plans = new Map<string, StudioPlanningSnapshot>();
 	private readonly current = new Map<string, StudioCommandRecord>();
 	private readonly blocked = new Set<string>();
@@ -58,8 +66,19 @@ export class StudioJournal {
 		return this.session.setValue(bindingAddress, binding, context);
 	}
 
-	async admit(operationId: string, context: Context = BACKGROUND_CONTEXT): Promise<void> {
-		this.admissions.set(operationId, { value: await this.binding(context) });
+	async admit(
+		operationId: string,
+		context: Context = BACKGROUND_CONTEXT,
+		action: AgentPromptAction | null = null,
+	): Promise<void> {
+		const record: StudioAdmission = { value: await this.binding(context), action };
+		this.admissions.set(operationId, record);
+		try {
+			await this.session.setValue(admissionAddress(operationId), record, BACKGROUND_CONTEXT);
+		} catch (error) {
+			this.admissions.delete(operationId);
+			throw error;
+		}
 	}
 
 	async discardAdmission(operationId: string): Promise<void> {
@@ -67,10 +86,20 @@ export class StudioJournal {
 		this.blocked.delete(operationId);
 		for (const [key, plan] of this.plans) if (plan.operationId === operationId) this.plans.delete(key);
 		for (const [id, record] of this.current) if (record.operationId === operationId) this.current.delete(id);
+		try {
+			await this.session.deleteValue(admissionAddress(operationId), BACKGROUND_CONTEXT);
+		} catch {
+			// Finished-request selection does not need to survive storage failures.
+		}
 	}
 
-	async admission(operationId: string) {
-		return this.admissions.get(operationId);
+	async admission(operationId: string, context: Context = BACKGROUND_CONTEXT) {
+		const existing = this.admissions.get(operationId);
+		if (existing) return existing;
+		const stored = (await this.session.getValue(admissionAddress(operationId), context))?.value;
+		if (!stored) return undefined;
+		this.admissions.set(operationId, stored);
+		return stored;
 	}
 
 	async planning(operationId: string, turnId: string) {

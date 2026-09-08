@@ -34,9 +34,11 @@ const snapshot: StudioSnapshot = {
 			position: [1, 1, 0],
 			rotation: [0, 0, 0],
 			scale: [1, 1, 1],
+			product: null,
 		},
 	],
 	selectedObjectIds: ["chair"],
+	budget: null,
 };
 await session.setValue(value("livi.studio.binding"), binding, context);
 const command: StudioCommand = {

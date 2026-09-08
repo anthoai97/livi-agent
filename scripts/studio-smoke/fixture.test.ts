@@ -9,12 +9,12 @@ const path = new URL("./fixtures/synthetic-room.json", import.meta.url);
 test("room exports reject missing evidence, duplicate instance IDs, and unsupported rotations", async () => {
 	const original = JSON.parse(await readFile(path, "utf8")) as { snapshot: Record<string, unknown> };
 	validateSnapshot(original.snapshot);
-	for (const required of ["designId", "revision", "geometry", "openings", "objects", "selectedObjectIds"]) {
+	for (const required of ["designId", "revision", "geometry", "openings", "objects", "selectedObjectIds", "budget"]) {
 		const snapshot = structuredClone(original.snapshot);
 		delete snapshot[required];
 		assert.throws(() => validateSnapshot(snapshot), /Fixture:/, `Missing ${required} must not receive a default`);
 	}
-	for (const required of ["id", "position", "rotation", "scale", "dimensions"]) {
+	for (const required of ["id", "position", "rotation", "scale", "dimensions", "product"]) {
 		const snapshot = structuredClone(original.snapshot);
 		Reflect.deleteProperty(snapshot.objects[0]!, required);
 		assert.throws(() => validateSnapshot(snapshot), /Fixture:/);
@@ -29,6 +29,16 @@ test("room exports reject missing evidence, duplicate instance IDs, and unsuppor
 	const infinite = structuredClone(fixture.snapshot);
 	infinite.objects[0]!.position[0] = Infinity;
 	assert.throws(() => validateSnapshot(infinite), /finite numbers/);
+	const zeroBudget = structuredClone(original.snapshot);
+	zeroBudget.budget = 0;
+	assert.throws(() => validateSnapshot(zeroBudget), /Fixture:/);
+	const zeroPrice = structuredClone(original.snapshot);
+	(zeroPrice.objects[0] as { product: { price: unknown } }).product.price = 0;
+	assert.throws(() => validateSnapshot(zeroPrice), /Fixture:/);
+	const coinciding = structuredClone(original.snapshot);
+	const first = coinciding.objects[0] as { id: string; product: { catalogId: string } };
+	first.product.catalogId = first.id;
+	validateSnapshot(coinciding);
 });
 
 test("independent assertions catch unintended material changes while tolerating numeric normalization", () => {

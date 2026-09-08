@@ -13,11 +13,20 @@ export interface StudioTransform {
 	rotation: StudioVector3;
 	scale: StudioVector3;
 }
+export interface StudioMoney {
+	amountMinor: number;
+	currency: string;
+}
+export interface StudioProduct {
+	catalogId: string;
+	price: StudioMoney | null;
+}
 export interface StudioObject extends StudioTransform {
 	id: string;
 	name: string;
 	category: string;
 	dimensions: StudioVector3;
+	product: StudioProduct | null;
 }
 export interface StudioSnapshot {
 	designId: string;
@@ -26,6 +35,7 @@ export interface StudioSnapshot {
 	openings: { id: string; kind: "door" | "window"; position: StudioVector3; dimensions: StudioVector3 }[];
 	objects: StudioObject[];
 	selectedObjectIds: string[];
+	budget: StudioMoney | null;
 }
 export interface StudioBinding {
 	designId: string;

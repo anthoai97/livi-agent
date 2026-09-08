@@ -26,9 +26,11 @@ const snapshot: StudioSnapshot = {
 			position: [1, 1, 0],
 			rotation: [0, 0, 0],
 			scale: [1, 1, 1],
+			product: null,
 		},
 	],
 	selectedObjectIds: ["chair-instance"],
+	budget: null,
 };
 async function adapter(broker: StudioBroker, tabId = "tab-a", designId = "design-a") {
 	const attachment = broker.attach();

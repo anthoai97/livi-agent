@@ -15,7 +15,7 @@ import {
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
-import { AgentController } from "./services/agent-controller.ts";
+import { AgentController, type AgentPromptAction } from "./services/agent-controller.ts";
 import { StudioSession } from "./services/studio.ts";
 import { Transcript } from "./services/transcript.ts";
 import { createTranscriptService } from "./services/transcript-provider.ts";
@@ -60,8 +60,16 @@ export class DecoratorSession implements RoutedSessionHandle {
 			prompt: async (request, context) => {
 				const result = await studio.exclusive(async () => {
 					if (this.closing) throw new Error("Decorator session is closed");
+					const parsed = parsePromptAction(request.action);
+					if ("error" in parsed) {
+						studio.debug("chat.rejected", {
+							messageLength: request.message.length,
+							errorCode: "invalid_message",
+						});
+						return { ok: false as const, error: { _tag: "InvalidMessage" as const, message: parsed.error } };
+					}
 					const operationId = options.session.idGenerator.next(Date.now());
-					await studio.journal.admit(operationId, context);
+					await studio.journal.admit(operationId, context, parsed.value);
 					try {
 						const admitted = await lane.accept({ kind: "prompt", operationId, prompt: request.message }, context);
 						if (!admitted.ok) await studio.journal.discardAdmission(operationId);
@@ -69,6 +77,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 							operationId,
 							messageLength: request.message.length,
 							errorCode: admitted.ok ? undefined : admitted.error._tag,
+							actionType: parsed.value?.type,
 						});
 						return admitted;
 					} catch (error) {
@@ -180,11 +189,13 @@ export class DecoratorSession implements RoutedSessionHandle {
 
 	private startDrive(operationId: string): void {
 		if (this.closing || this.drives.has(operationId)) return;
+		let settled = false;
 		const pending = this.lane
 			.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT)
 			.then((result) => {
 				if (!result.ok) throw result.error;
 				if (result.value.kind === "settled") {
+					settled = true;
 					const { status, error } = result.value.outcome;
 					this.studio.debug(status === "aborted" ? "chat.aborted" : "chat.finished", {
 						operationId,
@@ -203,8 +214,8 @@ export class DecoratorSession implements RoutedSessionHandle {
 					this.onError(error instanceof Error ? error : new Error(String(error)));
 			})
 			.finally(async () => {
-				await this.studio.journal.discardAdmission(operationId);
 				this.drives.delete(operationId);
+				if (settled && !this.closing) await this.studio.journal.discardAdmission(operationId);
 			});
 		this.drives.set(operationId, pending);
 	}
@@ -249,4 +260,35 @@ export class DecoratorSession implements RoutedSessionHandle {
 		})();
 		return this.closePromise;
 	}
+}
+
+function requiredId(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function parsePromptAction(action: unknown): { value: AgentPromptAction | null } | { error: string } {
+	if (action === undefined) return { value: null };
+	if (action === null || typeof action !== "object" || Array.isArray(action))
+		return { error: "action must be an add_asset or replace_asset object" };
+	const record = action as Record<string, unknown>;
+	if (record.type === "add_asset") {
+		if (!requiredId(record.selectedProductId)) return { error: "add_asset requires selectedProductId" };
+		if (typeof record.quantity !== "number" || !Number.isSafeInteger(record.quantity) || record.quantity < 1)
+			return { error: "add_asset quantity must be a positive integer" };
+		return {
+			value: { type: "add_asset", selectedProductId: record.selectedProductId, quantity: record.quantity },
+		};
+	}
+	if (record.type === "replace_asset") {
+		if (!requiredId(record.selectedProductId)) return { error: "replace_asset requires selectedProductId" };
+		if (!requiredId(record.targetObjectId)) return { error: "replace_asset requires targetObjectId" };
+		return {
+			value: {
+				type: "replace_asset",
+				selectedProductId: record.selectedProductId,
+				targetObjectId: record.targetObjectId,
+			},
+		};
+	}
+	return { error: "action type must be add_asset or replace_asset" };
 }

@@ -122,3 +122,52 @@ it("rejects unsolicited tool calls without an execution environment", async () =
 	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant", stopReason: "stop" } });
 });
+
+it("accepts ordinary text and a valid structured action", async () => {
+	const { runtime, faux } = await fixture();
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"type":"add_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"lamp-1"');
+			expect(input.systemPrompt).toContain('"quantity":2');
+			return fauxAssistantMessage("Noted");
+		},
+	]);
+	expect(
+		await runtime.controller.prompt(
+			{ message: "Add two lamps", action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 2 } },
+			context,
+		),
+	).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+});
+
+it.each([
+	null,
+	1,
+	true,
+	"add_asset",
+	[],
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: 0 },
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: 1.5 },
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: -1 },
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.MAX_SAFE_INTEGER + 1 },
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.NaN },
+	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.POSITIVE_INFINITY },
+	{ type: "add_asset", quantity: 1 },
+	{ type: "add_asset", selectedProductId: "", quantity: 1 },
+	{ type: "add_asset", selectedProductId: "   ", quantity: 1 },
+	{ type: "replace_asset", selectedProductId: "sofa-123" },
+	{ type: "replace_asset", selectedProductId: "sofa-123", targetObjectId: "" },
+	{ type: "replace_asset", selectedProductId: "  ", targetObjectId: "chair-1" },
+	{ type: "move_object", selectedProductId: "sofa-123" },
+])("rejects malformed action %j without starting or persisting an operation", async (action) => {
+	const { runtime, faux } = await fixture();
+	const operations = { kind: "value" as const, namespace: "livi.studio.operation", key: "" };
+	const before = await runtime.studio.journal.session.scanValues(operations, context);
+	const result = await runtime.controller.prompt({ message: "Replace this sofa", action } as never, context);
+	expect(result).toMatchObject({ accepted: false, operationId: null, error: { code: "invalid_message" } });
+	expect(faux.state.callCount).toBe(0);
+	expect((await runtime.lane.inspectExecution(context)).current).toBeNull();
+	expect(await runtime.studio.journal.session.scanValues(operations, context)).toEqual(before);
+});

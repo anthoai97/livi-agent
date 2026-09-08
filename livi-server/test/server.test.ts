@@ -131,6 +131,16 @@ test(
 		await eventually(() => second.directory.state.value?.sessions.length === 2);
 		const a = await attach(first, roomA.sessionId);
 		const b = await attach(second, roomB.sessionId);
+		const malformed = await a.controller.prompt(
+			{ message: "Add lamps", action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 0 } },
+			context,
+		);
+		assert.deepEqual(malformed, {
+			accepted: false,
+			operationId: null,
+			error: { code: "invalid_message", message: "add_asset quantity must be a positive integer" },
+		});
+		assert.equal(faux.state.callCount, 0, "Malformed wire actions must not start generation");
 		const response = await a.controller.prompt({ message: "Design a quiet room" }, context);
 		assert.equal(response.accepted, true);
 		await started.promise;
@@ -338,7 +348,8 @@ test(
 		const room = await first.management.create({}, context);
 		const attached = await attach(first, room.sessionId);
 		const generating = once(child, "message");
-		const accepted = await attached.controller.prompt({ message: "Keep my room design" }, context);
+		const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "sofa-placed" };
+		const accepted = await attached.controller.prompt({ message: "Keep my room design", action }, context);
 		assert.equal(accepted.accepted, true);
 		assert.deepEqual((await generating)[0], { type: "generating" });
 		const exited = once(child, "exit");
@@ -349,7 +360,16 @@ test(
 		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
 		const models = createModels();
 		models.setProvider(faux.provider);
-		faux.setResponses([fauxAssistantMessage("Recovered room design")]);
+		faux.setResponses([
+			(request) => {
+				assert.ok(
+					request.systemPrompt?.includes(JSON.stringify(action)),
+					"SQLite recovery must retain wire selection",
+				);
+				assert.ok(request.systemPrompt?.includes("Current request mutation block: true"));
+				return fauxAssistantMessage("Recovered room design");
+			},
+		]);
 		restarted = await startLiviServer({ dataDirectory, port: 0, models });
 		assert.equal(restarted.serverId, ready.serverId);
 		const recovered = await connect(restarted);

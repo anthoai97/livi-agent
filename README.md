@@ -97,8 +97,10 @@ The actual database export and its field mapping are still pending. The checked-
 | `geometry.floor`, `geometry.height` | Floor polygon in manifest XY metres and room height |
 | `openings` | Verified door/window IDs, positions, and dimensions; an empty array only for a room known to have none |
 | `objects[].id`, `name`, `category` | Placed instance identity and identifying text; catalog IDs cannot substitute for instance IDs |
+| `objects[].product` | Catalog identity and nullable `{ amountMinor, currency }` price, or `null` when unknown; never treat missing as zero |
 | `objects[].dimensions`, `position`, `rotation`, `scale` | Explicit finite transform/dimension triples in the documented coordinates; yaw only |
 | `selectedObjectIds` | Initial selection, or `[]` when nothing is selected; each scenario supplies these optional hints |
+| `budget` | Design budget `{ amountMinor, currency }`, or `null` when unknown; never treat missing as zero |
 
 Do not invent missing revisions, geometry, IDs, transforms, or coordinate conversions. Unknown extra snapshot/object fields are preserved and checked during mutations. Raw database shapes need a reviewed explicit mapping before this runner can consume them; the illustrative snapshot is not a database schema. Scenario expectations must name exported instances and expected coordinates independently of model output.
 
