@@ -16,6 +16,7 @@
     "start": "pnpm --filter @livi/server start",
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test:browser": "tsx scripts/browser-smoke.ts",
+    "pack:studio": "node scripts/pack-studio-contracts.mjs",
     "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
     "prepare": "husky"
