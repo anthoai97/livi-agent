@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@earendil-works/pi-server";
+import type { StudioBroker } from "../studio-broker.ts";
 import {
 	type SessionCreateOptions,
 	SessionDirectory,
@@ -13,6 +14,7 @@ import {
 	SessionManagement,
 	type SessionSummary,
 } from "./sessions.ts";
+import { StudioConnection, StudioDirectory } from "./studio.ts";
 
 export interface ServerServices {
 	readonly host: RoutedServerServiceHost;
@@ -21,6 +23,7 @@ export interface ServerServices {
 }
 
 export async function createServerServices(options: {
+	studio?: StudioBroker;
 	list(context: Context): Promise<SessionSummary[]>;
 	create(createOptions: SessionCreateOptions, context: Context): Promise<SessionSummary>;
 }): Promise<ServerServices> {
@@ -51,10 +54,21 @@ export async function createServerServices(options: {
 	return {
 		host: {
 			attachClient(presentation) {
+				const studio = options.studio?.attach();
 				const provider = new RemoteServiceProvider([
 					{ service: SessionDirectory, mode: "singleton" },
 					{ service: SessionManagement, mode: "singleton" },
+					...(studio
+						? [
+								{ service: StudioConnection, mode: "singleton" as const },
+								{ service: StudioDirectory, mode: "singleton" as const },
+							]
+						: []),
 				]);
+				if (studio && options.studio) {
+					provider.provide(StudioConnection, studio.service);
+					provider.provide(StudioDirectory, { state: options.studio.directory });
+				}
 				provider.provide(SessionDirectory, { state: directory });
 				provider.provide(SessionManagement, {
 					create: (createOptions, context) =>
@@ -72,7 +86,10 @@ export async function createServerServices(options: {
 							await presentation.detachSession(context);
 						}),
 				});
-				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment));
+				const attachment = createProviderAttachment(provider, () => {
+					studio?.release();
+					attachments.delete(attachment);
+				});
 				attachments.add(attachment);
 				return attachment;
 			},
