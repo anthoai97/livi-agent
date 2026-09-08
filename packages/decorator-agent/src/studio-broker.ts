@@ -290,6 +290,10 @@ export class StudioBroker {
 			if (response.result.status === "saved" || response.result.status === "rejected")
 				this.results.set(response.result.commandId, structuredClone(response.result));
 			if (response.context) this.applyContext(connection, response.context);
+			if (response.result.status === "pending" || response.result.status === "unknown") {
+				pending.resolve(response);
+				return; // Keep authority/correlation for the adapter's later terminal outcome.
+			}
 		} else if (response.type !== "error") throw new StudioBrokerError("invalid_arguments", "Invalid response");
 		this.responses.set(response.requestId, { connection, response: structuredClone(response) });
 		this.finish(response.requestId, response);

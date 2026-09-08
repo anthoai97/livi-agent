@@ -16,8 +16,12 @@ import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
 import { AgentController } from "./services/agent-controller.ts";
+import { StudioSession } from "./services/studio.ts";
 import { Transcript } from "./services/transcript.ts";
 import { createTranscriptService } from "./services/transcript-provider.ts";
+import type { StudioBroker } from "./studio-broker.ts";
+import { StudioSessionRuntime } from "./studio-session.ts";
+import { createStudioTools, type StudioToolContext, studioSystemPrompt } from "./studio-tools.ts";
 
 export interface DecoratorSessionOptions {
 	session: Session;
@@ -25,10 +29,11 @@ export interface DecoratorSessionOptions {
 	modelId?: string;
 	apiKey?: string;
 	onError?: (error: Error) => void;
+	studio?: StudioBroker;
 }
 
 export class DecoratorSession implements RoutedSessionHandle {
-	readonly harness: AgentHarness;
+	readonly harness: AgentHarness<StudioToolContext>;
 	readonly lane: AgentLane;
 	readonly controller: AgentController;
 	private readonly transcript: ReturnType<typeof createTranscriptService>;
@@ -37,15 +42,36 @@ export class DecoratorSession implements RoutedSessionHandle {
 	private readonly onError: (error: Error) => void;
 	private closing = false;
 	private closePromise?: Promise<void>;
+	readonly studio: StudioSessionRuntime;
 
-	private constructor(harness: AgentHarness, lane: AgentLane, options: DecoratorSessionOptions) {
+	private constructor(
+		harness: AgentHarness<StudioToolContext>,
+		lane: AgentLane,
+		options: DecoratorSessionOptions,
+		studio: StudioSessionRuntime,
+	) {
 		this.harness = harness;
 		this.lane = lane;
+		this.studio = studio;
 		this.onError = options.onError ?? ((error) => console.error(error));
 		this.transcript = createTranscriptService(lane, replicatedState);
 		this.controller = {
 			prompt: async (request, context) => {
-				const result = await lane.accept({ kind: "prompt", prompt: request.message }, context);
+				const result = await studio.exclusive(async () => {
+					if (this.closing) throw new Error("Decorator session is closed");
+					const operationId = options.session.idGenerator.next(Date.now());
+					await studio.journal.admit(operationId, context);
+					try {
+						const admitted = await lane.accept({ kind: "prompt", operationId, prompt: request.message }, context);
+						if (!admitted.ok) await studio.journal.discardAdmission(operationId);
+						return admitted;
+					} catch (error) {
+						// Admission may have committed even if its caller stopped waiting. Keep its pinned binding then.
+						if ((await lane.inspectExecution(BACKGROUND_CONTEXT)).current?.id !== operationId)
+							await studio.journal.discardAdmission(operationId);
+						throw error;
+					}
+				});
 				if (!result.ok)
 					return {
 						accepted: false,
@@ -66,6 +92,8 @@ export class DecoratorSession implements RoutedSessionHandle {
 			requestAbort: async (operationId, context) => {
 				const result = await lane.requestAbort(operationId, context);
 				if (!result.ok) throw result.error;
+				await studio.journal.cancelPrepared(operationId);
+				await studio.publish();
 				this.startDrive(operationId);
 			},
 		};
@@ -92,34 +120,47 @@ export class DecoratorSession implements RoutedSessionHandle {
 		}
 		const model = registry.getModel("google", options.modelId ?? "gemini-3.5-flash-lite");
 		if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-3.5-flash-lite"}`);
-		const { harness, open } = await AgentHarness.create(
-			{
-				session: options.session,
-				models: registry,
-				model,
-				tools: [],
-				activeToolNames: [],
-				resources: {},
-				systemPrompt:
-					"You are Livi, a helpful assistant for general questions and interior decoration advice. Answer in the user’s language, using the information they supply.",
-				compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
-			},
-			context,
-		);
+		const studio = new StudioSessionRuntime(options.session, options.studio);
+		let harness: AgentHarness<StudioToolContext> | undefined;
 		let runtime: DecoratorSession | undefined;
 		try {
+			await studio.activate();
+			const tools = createStudioTools();
+			const created = await AgentHarness.create<StudioToolContext>(
+				{
+					session: options.session,
+					models: registry,
+					model,
+					tools,
+					activeToolNames: tools.map((tool) => tool.name),
+					toolExecution: "sequential",
+					toolContext: async () => ({ studio, planning: await studio.context() }),
+					resources: {},
+					systemPrompt: studioSystemPrompt,
+					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
+				},
+				context,
+			);
+			harness = created.harness;
+			const { open } = created;
 			if (open.some((operation) => operation.lane !== "main"))
 				throw new Error("Decorator sessions support only the main lane");
 			const lane = await harness.lane("main", context);
-			runtime = new DecoratorSession(harness, lane, options);
+			await lane.setActiveTools(
+				tools.map((tool) => tool.name),
+				context,
+			);
+			runtime = new DecoratorSession(harness, lane, options, studio);
 			await runtime.transcript.activate();
 			for (const operation of open) {
 				runtime.startDrive(operation.operationId);
 			}
 			return runtime;
 		} catch (error) {
-			if (runtime === undefined) await harness.close(BACKGROUND_CONTEXT);
-			else await runtime.close(BACKGROUND_CONTEXT);
+			if (runtime === undefined) {
+				await studio.close();
+				await harness?.close(BACKGROUND_CONTEXT);
+			} else await runtime.close(BACKGROUND_CONTEXT);
 			throw error;
 		}
 	}
@@ -146,9 +187,11 @@ export class DecoratorSession implements RoutedSessionHandle {
 		const provider = new RemoteServiceProvider([
 			{ service: AgentController, mode: "singleton" },
 			{ service: Transcript, mode: "singleton" },
+			{ service: StudioSession, mode: "singleton" },
 		]);
 		provider.provide(AgentController, this.controller);
 		provider.provide(Transcript, this.transcript.service);
+		provider.provide(StudioSession, this.studio.service);
 		const endpoint = createRemoteServiceEndpoint(provider);
 		let released = false;
 		const attachment: RoutedSessionAttachment = {
@@ -171,6 +214,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 	close(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		this.closing = true;
 		this.closePromise ??= (async () => {
+			await this.studio.close();
 			for (const attachment of this.attachments) await attachment.release(context);
 			await this.transcript.dispose();
 			await this.harness.close(context);
