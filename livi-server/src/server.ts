@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Models } from "@earendil-works/pi-ai";
 import { Server, type ServerHost, SessionNotFoundError } from "@earendil-works/pi-server";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { createServerServices, DecoratorSession } from "@livi/decorator-agent";
+import { createServerServices, DecoratorSession, StudioBroker } from "@livi/decorator-agent";
 import { WebSocket, WebSocketServer } from "ws";
 
 export interface LiviServerOptions {
@@ -20,9 +20,18 @@ export interface LiviServerOptions {
 	modelId?: string;
 	apiKey?: string;
 	onError?: (error: Error) => void;
+	studioAllowedOrigins?: string[];
 }
 
 export async function startLiviServer(options: LiviServerOptions = {}) {
+	const studioOrigins = new Set(
+		(options.studioAllowedOrigins ?? []).map((origin) => {
+			const parsed = new URL(origin);
+			if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin)
+				throw new Error(`Expected an exact HTTP(S) Studio origin: ${origin}`);
+			return origin;
+		}),
+	);
 	const context = BACKGROUND_CONTEXT;
 	const dataDirectory = resolve(options.dataDirectory ?? fileURLToPath(new URL("../../.data", import.meta.url)));
 	const clientDirectory = resolve(
@@ -43,7 +52,9 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		databaseFactory: createNodeSqliteFactory(),
 	});
 	const reportError = options.onError ?? ((error: Error) => console.error(error));
+	const studio = new StudioBroker();
 	const services = await createServerServices({
+		studio,
 		list: async () =>
 			(await repo.list(undefined, context)).map(({ id, createdAt }) => ({ serverId, sessionId: id, createdAt })),
 		create: async () => {
@@ -91,6 +102,19 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 	const http = createServer((request, response) => {
 		void (async () => {
 			const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+			if (pathname === "/api/bootstrap" && request.headers.origin) {
+				const origin = request.headers.origin;
+				if (
+					!studioOrigins.has(origin) &&
+					origin !== `http://${request.headers.host}` &&
+					origin !== `https://${request.headers.host}`
+				) {
+					response.writeHead(403).end();
+					return;
+				}
+				response.setHeader("access-control-allow-origin", origin);
+				response.setHeader("vary", "Origin");
+			}
 			if (request.method !== "GET" && request.method !== "HEAD") {
 				response.writeHead(405).end();
 				return;
@@ -149,11 +173,11 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 			socket.destroy();
 			return;
 		}
-		// The local, unauthenticated prototype accepts only same-origin browser connections.
+		// Same-origin chat and explicitly configured Studio origins only.
 		const origin = request.headers.origin;
 		if (origin) {
 			try {
-				if (new URL(origin).host !== request.headers.host) {
+				if (new URL(origin).host !== request.headers.host && !studioOrigins.has(origin)) {
 					socket.destroy();
 					return;
 				}
@@ -197,6 +221,7 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		closing ??= (async () => {
 			const errors: unknown[] = [];
 			for (const cleanup of [
+				() => studio.close(),
 				() => protocol.close(),
 				() => services.dispose(),
 				() => repo.close(context),
