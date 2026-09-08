@@ -358,6 +358,54 @@ it("keeps a late saved result durable and visible after Stop and blocks another 
 	expect(fake.state.commands).toHaveLength(1);
 });
 
+it.each(["pending", "unknown"] as const)(
+	"publishes the actual %s result message without settling the action",
+	async (status) => {
+		const { runtime, fake, faux } = await fixture();
+		fake.state.hold = true;
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("The save is unconfirmed"),
+		]);
+		await prompt(runtime);
+		await expect.poll(() => fake.state.held.length).toBe(1);
+		const commandId = fake.state.commands[0]!.commandId;
+		const message = "Durable command status could not be established. The command will not be retried.";
+		fake.state.results.set(commandId, { commandId, status, message });
+		await fake.releaseResult();
+		await runtime.lane.waitForIdle(context);
+		expect(runtime.studio.service.state.value).toMatchObject({
+			busy: true,
+			actions: [{ commandId, state: "outcome_unknown", message }],
+		});
+		expect(fake.state.commands).toHaveLength(1);
+	},
+);
+
+it("uses the room inventory for a named object when nothing is selected", async () => {
+	const { runtime, fake, faux } = await fixture();
+	fake.state.snapshot.selectedObjectIds = [];
+	fake.state.snapshot.objects[0]!.name = "Sofa";
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"selectedObjectIds":[]');
+			expect(input.systemPrompt).toContain('"name":"Sofa"');
+			expect(input.systemPrompt).toContain('"id":"chair-1"');
+			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [1.5, 2, 0] }), {
+				stopReason: "toolUse",
+			});
+		},
+		fauxAssistantMessage("Moved the sofa 0.5 metres right"),
+	]);
+	await prompt(runtime, "Move the sofa 0.5 metres right");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(fake.state.snapshot.objects[0]?.position).toEqual([1.5, 2, 0]);
+	expect((await runtime.studio.journal.records())[0]?.state).toBe("committed");
+});
+
 it("cancels a prepared command before mailbox exposure", async () => {
 	const { runtime, faux, fake } = await fixture();
 	const entered = Promise.withResolvers<void>();
