@@ -1,10 +1,10 @@
 import { type Context, defineService, type ReplicatedState } from "@earendil-works/chord";
 
 /** Manifest coordinates: metres, +X right, +Y toward back, +Z up; floor front-left origin.
- * Rotation is radians, intrinsic XYZ; v1 supports yaw only ([0, 0, yaw]).
+ * Rotation is radians, intrinsic XYZ; Studio supports yaw only ([0, 0, yaw]).
  * Adapter rendering must retain its asset front-view correction. See docs/Studio-Contract.md.
  */
-export const STUDIO_CONTRACT_VERSION = 1;
+export const STUDIO_CONTRACT_VERSION = 2;
 export const STUDIO_TRANSFORM_TOLERANCE = 0.0001;
 export const STUDIO_ANGLE_TOLERANCE = 0.000001;
 export type StudioVector3 = [number, number, number];
@@ -65,9 +65,7 @@ export type StudioErrorCode =
 	| "invalid_arguments"
 	| "stale_revision"
 	| "save_rejected"
-	| "outcome_unknown"
-	| "design_busy"
-	| "conflicting_result";
+	| "outcome_unknown";
 export interface StudioError {
 	code: StudioErrorCode;
 	message: string;
@@ -82,12 +80,12 @@ export type StudioCommandResult =
 			after: StudioTransform | null;
 	  }
 	| { commandId: string; status: "rejected"; error: StudioError }
-	| { commandId: string; status: "pending" | "unknown"; message: string };
+	| { commandId: string; status: "unknown"; message: string };
 export type StudioMailboxRequest = {
 	requestId: string;
 	generation: string;
 	binding: StudioBinding;
-} & ({ type: "context" } | { type: "execute"; command: StudioCommand } | { type: "status"; commandId: string });
+} & ({ type: "context" } | { type: "execute"; command: StudioCommand });
 export type StudioResponse = {
 	requestId: string;
 	generation: string;
@@ -109,7 +107,7 @@ export interface StudioConnection {
 	respond(response: StudioResponse, context: Context): Promise<void>;
 }
 export const StudioConnection = defineService<StudioConnection>("livi.studio-connection");
-export type StudioPhase = "offline" | "reconciling" | "ready";
+export type StudioPhase = "offline" | "ready";
 export interface StudioSummary extends StudioBinding {
 	label: string;
 	phase: StudioPhase;
@@ -118,19 +116,10 @@ export interface StudioDirectory {
 	readonly state: ReplicatedState<{ studios: StudioSummary[] }>;
 }
 export const StudioDirectory = defineService<StudioDirectory>("livi.studio-directory");
-export interface StudioActionSummary {
-	commandId: string;
-	objectId: string;
-	action: StudioAction["type"];
-	state: "prepared" | "outcome_unknown" | "committed" | "rejected" | "cancelled_before_send";
-	message: string;
-}
 export interface StudioSessionState {
 	binding: StudioBinding | null;
 	phase: StudioPhase;
 	snapshot: StudioSnapshot | null;
-	busy: boolean;
-	actions: StudioActionSummary[];
 }
 export interface StudioSession {
 	readonly state: ReplicatedState<StudioSessionState>;

@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { MemorySessionRepo, type Session } from "@earendil-works/pi-agent-core/harness/session";
+import { MemorySessionRepo, operationState, type Session } from "@earendil-works/pi-agent-core/harness/session";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { convertTools } from "@earendil-works/pi-ai/api/google-shared";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,7 +11,6 @@ import type {
 	StudioSnapshot,
 } from "../src/services/studio.ts";
 import { StudioBroker } from "../src/studio-broker.ts";
-import { StudioJournal } from "../src/studio-journal.ts";
 import { createStudioTools } from "../src/studio-tools.ts";
 
 const cleanup: (() => Promise<void> | void)[] = [];
@@ -62,7 +61,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 1 },
+		{ ...binding, label: "Simulated Studio", contractVersion: 2 },
 		context,
 	);
 	const state = {
@@ -92,7 +91,6 @@ async function adapter(broker: StudioBroker, stored: Session) {
 		let result: StudioCommandResult;
 		if (request.type === "execute") {
 			const command = request.command;
-			expect((await new StudioJournal(state.session).get(command.commandId))?.state).toBe("outcome_unknown");
 			state.commands.push(command);
 			const existing = state.results.get(command.commandId);
 			if (existing) result = existing;
@@ -136,12 +134,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 				state.held.push(request);
 				return;
 			}
-		} else
-			result = state.results.get(request.commandId) ?? {
-				commandId: request.commandId,
-				status: "unknown",
-				message: "No authoritative saved evidence",
-			};
+		} else throw new Error("Unexpected Studio request");
 		await connection.service.respond({ requestId: request.requestId, generation, type: "result", result }, context);
 	};
 	const unsubscribe = connection.service.mailbox.subscribe((mailbox) => {
@@ -259,10 +252,13 @@ it("retains the original planning revision and selection while the model waits, 
 	expect(fake.state.commands).toHaveLength(1);
 	expect(fake.state.commands[0]).toMatchObject({ expectedRevision: "1", objectId: "chair-1" });
 	expect(fake.state.snapshot.objects[0]?.position).toEqual([1, 2, 0]);
-	expect((await runtime.studio.journal.records())[0]).toMatchObject({ operationId, state: "rejected" });
+	expect(JSON.stringify(await runtime.lane.findEntries({ order: "oldestFirst" }, context))).toContain(
+		"Room changed since planning",
+	);
+	expect(await runtime.studio.journal.admission(operationId)).toBeUndefined();
 });
 
-it("moves, rotates, reverses across reopen, and never repeats a committed invocation", async () => {
+it("moves, rotates, and reverses completed actions across reopen", async () => {
 	const { runtime, repo, stored, broker, fake, faux, models } = await fixture();
 	faux.setResponses([
 		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
@@ -287,21 +283,6 @@ it("moves, rotates, reverses across reopen, and never repeats a committed invoca
 	fake.state.session = reopened;
 	const recovered = await DecoratorSession.create({ session: reopened, models, studio: broker });
 	cleanup.push(() => recovered.close());
-	const tool = createStudioTools().find((tool) => tool.name === "move_object")!;
-	await tool.execute(
-		"different-provider-id",
-		{ objectId: "chair-1", position: [99, 99, 0] },
-		() => {},
-		{ studio: recovered.studio, planning: undefined },
-		{
-			invocationId: move.invocationId,
-			operationId: move.operationId,
-			turnId: move.turnId,
-			getMemo: async () => undefined,
-			setMemo: async () => {},
-		},
-		context,
-	);
 	expect(fake.state.commands).toHaveLength(2);
 	faux.setResponses([
 		fauxAssistantMessage(
@@ -326,63 +307,6 @@ it("moves, rotates, reverses across reopen, and never repeats a committed invoca
 	});
 	expect(new Set(fake.state.commands.map((command) => command.commandId)).size).toBe(4);
 });
-
-it("keeps a late saved result durable and visible after Stop and blocks another mutation while unknown", async () => {
-	const { runtime, fake, faux } = await fixture();
-	fake.state.hold = true;
-	faux.setResponses([
-		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
-			stopReason: "toolUse",
-		}),
-		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
-			stopReason: "toolUse",
-		}),
-		fauxAssistantMessage("The previous save is still unknown"),
-		fauxAssistantMessage("General advice remains available"),
-	]);
-	const operationId = await prompt(runtime);
-	await expect.poll(() => fake.state.held.length).toBe(1);
-	await runtime.controller.requestAbort(operationId, context);
-	await runtime.lane.waitForIdle(context);
-	expect((await runtime.studio.journal.records())[0]?.state).toBe("outcome_unknown");
-	await expect(runtime.studio.service.bind(null, context)).rejects.toThrow("previous room action");
-	await prompt(runtime, "Rotate it now");
-	await runtime.lane.waitForIdle(context);
-	expect(fake.state.commands).toHaveLength(1);
-	expect(await runtime.studio.journal.records()).toHaveLength(1);
-	await prompt(runtime, "Suggest lighting");
-	await runtime.lane.waitForIdle(context);
-	await fake.releaseResult();
-	expect((await runtime.studio.journal.records())[0]?.state).toBe("committed");
-	expect(runtime.studio.service.state.value?.actions[0]).toMatchObject({ state: "committed", message: "Saved" });
-	expect(fake.state.commands).toHaveLength(1);
-});
-
-it.each(["pending", "unknown"] as const)(
-	"publishes the actual %s result message without settling the action",
-	async (status) => {
-		const { runtime, fake, faux } = await fixture();
-		fake.state.hold = true;
-		faux.setResponses([
-			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage("The save is unconfirmed"),
-		]);
-		await prompt(runtime);
-		await expect.poll(() => fake.state.held.length).toBe(1);
-		const commandId = fake.state.commands[0]!.commandId;
-		const message = "Durable command status could not be established. The command will not be retried.";
-		fake.state.results.set(commandId, { commandId, status, message });
-		await fake.releaseResult();
-		await runtime.lane.waitForIdle(context);
-		expect(runtime.studio.service.state.value).toMatchObject({
-			busy: true,
-			actions: [{ commandId, state: "outcome_unknown", message }],
-		});
-		expect(fake.state.commands).toHaveLength(1);
-	},
-);
 
 it("uses the room inventory for a named object when nothing is selected", async () => {
 	const { runtime, fake, faux } = await fixture();
@@ -427,7 +351,7 @@ it("cancels a prepared command before mailbox exposure", async () => {
 	await runtime.controller.requestAbort(operationId, context);
 	release.resolve();
 	await runtime.lane.waitForIdle(context);
-	expect((await runtime.studio.journal.records())[0]?.state).toBe("cancelled_before_send");
+	expect(await runtime.studio.journal.records()).toEqual([]);
 	expect(fake.state.commands).toEqual([]);
 	await runtime.studio.service.bind(null, context);
 });
@@ -530,7 +454,10 @@ it("rejects a later call planned against the same revision instead of silently r
 	await prompt(runtime);
 	await runtime.lane.waitForIdle(context);
 	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "1"]);
-	expect((await runtime.studio.journal.records()).map((record) => record.state)).toEqual(["committed", "rejected"]);
+	expect((await runtime.studio.journal.records()).map((record) => record.state)).toEqual(["committed"]);
+	expect(JSON.stringify(await runtime.lane.findEntries({ order: "oldestFirst" }, context))).toContain(
+		"Room changed since planning",
+	);
 	expect(fake.state.snapshot.objects[0]?.rotation).toEqual([0, 0, 0]);
 });
 
@@ -585,42 +512,6 @@ it("removes exactly one object and never reverses a removal", async () => {
 	await prompt(runtime, "Undo that");
 	await runtime.lane.waitForIdle(context);
 	expect(fake.state.commands).toHaveLength(1);
-});
-
-it("replays a command committed before its harness tool result without a second effect", async () => {
-	const { runtime, faux, fake, repo, stored, broker, models } = await fixture();
-	const committed = Promise.withResolvers<void>();
-	const release = Promise.withResolvers<void>();
-	const settle = runtime.studio.journal.settle.bind(runtime.studio.journal);
-	vi.spyOn(runtime.studio.journal, "settle").mockImplementation(async (result, context) => {
-		const record = await settle(result, context);
-		committed.resolve();
-		await release.promise;
-		return record;
-	});
-	faux.setResponses([
-		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
-			stopReason: "toolUse",
-		}),
-	]);
-	await prompt(runtime);
-	await committed.promise;
-	expect((await runtime.studio.journal.records())[0]?.state).toBe("committed");
-	await runtime.close();
-	release.resolve();
-	await expect.poll(() => broker.getState(fake.binding).busy).toBe(false);
-	fake.state.session = await repo.open(stored.metadata, context);
-	faux.setResponses([fauxAssistantMessage("Saved move recovered")]);
-	const recovered = await DecoratorSession.create({ session: fake.state.session, studio: broker, models });
-	cleanup.push(() => recovered.close());
-	await recovered.lane.waitForIdle(context);
-	expect(fake.state.commands).toHaveLength(1);
-	const entries = await recovered.lane.findEntries({ order: "oldestFirst" }, context);
-	expect(
-		entries.some(
-			(entry) => entry.type === "message" && entry.message.role === "toolResult" && !entry.message.isError,
-		),
-	).toBe(true);
 });
 
 it("upgrades an old empty allowlist while keeping an admitted generation's captured configuration", async () => {
@@ -703,193 +594,120 @@ it("refuses reversal after a manual object change", async () => {
 	expect(fake.state.snapshot.objects[0]?.position).toEqual([2, 2, 0]);
 });
 
-it.each(["invalid-reference", "manual-conflict"])(
-	"blocks direct mutation fallbacks after a failed reversal (%s), until a new user operation",
-	async (failure) => {
-		const { runtime, fake, faux } = await fixture();
-		faux.setResponses([
-			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage("Moved"),
-		]);
-		await prompt(runtime);
-		await runtime.lane.waitForIdle(context);
-		const original = (await runtime.studio.journal.records())[0]!;
-		fake.state.snapshot.objects[0]!.position = [4, 2, 0];
-		fake.state.snapshot.revision = "3";
-		const before = structuredClone(fake.state.snapshot);
-		faux.setResponses([
-			fauxAssistantMessage(
-				fauxToolCall("move_object", {
-					objectId: "chair-1",
-					originalCommandId: failure === "invalid-reference" ? "invented-reference" : original.command.commandId,
-				}),
-				{ stopReason: "toolUse" },
-			),
-			(input) => {
-				expect(input.systemPrompt).toContain("Current request reversal block: true");
-				return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [1, 2, 0] }), {
-					stopReason: "toolUse",
-				});
-			},
-			fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage(fauxToolCall("remove_object", { objectId: "chair-1" }), { stopReason: "toolUse" }),
-			fauxAssistantMessage("The reversal failed. Please clarify before another room action."),
-		]);
-		const blockedOperation = await prompt(runtime, "Reverse the move; do not overwrite manual edits");
-		await runtime.lane.waitForIdle(context);
-		expect(await runtime.studio.journal.mutationBlocked(blockedOperation)).toBe(true);
-		expect(fake.state.snapshot).toEqual(before);
-		expect(fake.state.commands).toHaveLength(1);
-		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
-		expect(
-			entries.filter(
-				(entry) =>
-					entry.type === "message" &&
-					entry.message.role === "toolResult" &&
-					entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
-			),
-		).toHaveLength(3);
-		faux.setResponses([
-			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [3, 2, 0] }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage("New explicit move saved"),
-		]);
-		const nextOperation = await prompt(runtime, "Make a new move to [3,2,0]");
-		await runtime.lane.waitForIdle(context);
-		expect(nextOperation).not.toBe(blockedOperation);
-		expect(await runtime.studio.journal.mutationBlocked(nextOperation)).toBe(false);
-		expect(fake.state.commands).toHaveLength(2);
-		expect(fake.state.snapshot.objects[0]?.position).toEqual([3, 2, 0]);
-	},
-);
-
-it("retains the failed-reversal fence when a fallback call replays after restart", async () => {
-	const { runtime, fake, faux, repo, stored, broker, models } = await fixture();
-	const entered = Promise.withResolvers<void>();
-	const terminated = Promise.withResolvers<void>();
-	vi.spyOn(runtime.studio, "prepare").mockImplementation(async () => {
-		entered.resolve();
-		await terminated.promise;
-		throw new Error("Simulated process loss before fallback admission");
-	});
+it("reports a lost reply once, refuses a model retry, and permits the next explicit user edit", async () => {
+	const { runtime, fake, faux } = await fixture();
+	fake.state.hold = true;
 	faux.setResponses([
-		fauxAssistantMessage(
-			fauxToolCall("move_object", { objectId: "chair-1", originalCommandId: "invented-reference" }),
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [4, 2, 0] }), {
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 			stopReason: "toolUse",
 		}),
-	]);
-	const operationId = await prompt(runtime, "Reverse the move");
-	await entered.promise;
-	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(true);
-	await runtime.close();
-	terminated.resolve();
-	fake.state.session = await repo.open(stored.metadata, context);
-	faux.setResponses([fauxAssistantMessage("Reversal conflict retained; waiting for clarification")]);
-	const recovered = await DecoratorSession.create({ session: fake.state.session, studio: broker, models });
-	cleanup.push(() => recovered.close());
-	await recovered.lane.waitForIdle(context);
-	expect(await recovered.studio.journal.mutationBlocked(operationId)).toBe(true);
-	expect(fake.state.commands).toEqual([]);
-	expect(fake.state.snapshot).toEqual(room());
-	const entries = await recovered.lane.findEntries({ order: "oldestFirst" }, context);
-	expect(
-		entries.some(
-			(entry) =>
-				entry.type === "message" &&
-				entry.message.role === "toolResult" &&
-				entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
-		),
-	).toBe(true);
-});
-
-it("persists the reversal fence before later mutations in the same model tool batch can dispatch", async () => {
-	const { runtime, fake, faux } = await fixture();
-	faux.setResponses([
-		fauxAssistantMessage(
-			[
-				fauxToolCall("move_object", { objectId: "chair-1", originalCommandId: "invented-reference" }),
-				fauxToolCall("move_object", { objectId: "chair-1", position: [4, 2, 0] }),
-				fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }),
-				fauxToolCall("remove_object", { objectId: "chair-1" }),
-			],
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage("Reversal failed; the batch made no room changes"),
-	]);
-	const operationId = await prompt(runtime, "Reverse the move");
-	await runtime.lane.waitForIdle(context);
-	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(true);
-	expect(fake.state.commands).toEqual([]);
-	expect(fake.state.snapshot).toEqual(room());
-	expect(await runtime.studio.journal.records()).toEqual([]);
-	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
-	expect(
-		entries.filter(
-			(entry) =>
-				entry.type === "message" &&
-				entry.message.role === "toolResult" &&
-				entry.message.content.some((part) => part.type === "text" && part.text.startsWith("reversal_blocked:")),
-		),
-	).toHaveLength(3);
-});
-
-it("still permits ordinary stale non-reversal replanning within the same operation", async () => {
-	const { runtime, fake, faux } = await fixture();
-	faux.setResponses([
-		() => {
-			fake.state.snapshot.revision = "2";
+		(input) => {
+			const results = input.messages.filter((message) => message.role === "toolResult");
+			expect(JSON.stringify(results)).toContain("No result");
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
 			});
 		},
-		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [3, 2, 0] }), {
+		fauxAssistantMessage("No result received. Check Studio before another request."),
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(await runtime.studio.journal.records()).toEqual([]);
+	await runtime.studio.service.bind(null, context);
+	await runtime.studio.service.bind(fake.binding, context);
+	fake.state.hold = false;
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
 			stopReason: "toolUse",
 		}),
-		fauxAssistantMessage("Replanned move saved"),
+		fauxAssistantMessage("Studio saved the rotation"),
 	]);
-	const operationId = await prompt(runtime);
+	await prompt(runtime, "Rotate the chair now");
 	await runtime.lane.waitForIdle(context);
-	expect(await runtime.studio.journal.mutationBlocked(operationId)).toBe(false);
-	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "2"]);
-	expect(fake.state.snapshot.objects[0]?.position).toEqual([3, 2, 0]);
+	expect(fake.state.commands.map((command) => command.action.type)).toEqual(["move", "rotate"]);
 });
 
-it("replays tools after an assistant was saved before the journal using the original durable planning snapshot", async () => {
-	const { runtime, fake, faux, stored, repo, broker, models } = await fixture();
-	const entered = Promise.withResolvers<void>();
-	const terminated = Promise.withResolvers<void>();
-	vi.spyOn(runtime.studio, "prepare").mockImplementation(async () => {
-		entered.resolve();
-		await terminated.promise;
-		throw new Error("Simulated process loss");
-	});
+it("Stop after dispatch leaves no room lock and a new user request can save", async () => {
+	const { runtime, fake, faux } = await fixture();
+	fake.state.hold = true;
 	faux.setResponses([
 		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 			stopReason: "toolUse",
 		}),
 	]);
-	await prompt(runtime);
+	const operationId = await prompt(runtime);
+	await expect.poll(() => fake.state.held.length).toBe(1);
+	await runtime.controller.requestAbort(operationId, context);
+	await runtime.lane.waitForIdle(context);
+	expect(await runtime.lane.getResult(operationId, context)).toMatchObject({ status: "aborted" });
+	expect(fake.connection.service.mailbox.value!.requests).toEqual([]);
+	fake.state.hold = false;
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Saved"),
+	]);
+	await prompt(runtime, "Rotate it");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(2);
+});
+
+it("never replays an old safe pending effect after restart, including model retry; a new prompt still works", async () => {
+	const { runtime, fake, faux, repo, stored, broker, models } = await fixture();
+	const entered = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	await runtime.harness.setTools(
+		createStudioTools().map((tool) => ({
+			...tool,
+			replay: "safe" as const,
+			execute: async (...args: Parameters<typeof tool.execute>) => {
+				const result = await tool.execute(...args);
+				entered.resolve();
+				await release.promise;
+				return result;
+			},
+		})),
+		context,
+	);
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+	]);
+	const operationId = await prompt(runtime);
 	await entered.promise;
-	expect(await runtime.studio.journal.records()).toEqual([]);
+	const pending = await stored.getValue(operationState(operationId), context);
+	expect(pending?.value).toMatchObject({
+		at: "tools",
+		batch: { calls: [{ status: "effect_pending", replay: "safe" }] },
+	});
 	await runtime.close();
-	terminated.resolve();
-	fake.state.snapshot.revision = "2";
-	fake.state.snapshot.objects[0]!.position = [4, 2, 0];
-	faux.setResponses([fauxAssistantMessage("Room changed; replan required")]);
-	fake.state.session = await repo.open(stored.metadata, context);
-	const recovered = await DecoratorSession.create({ session: fake.state.session, models, studio: broker });
+	release.resolve();
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("The interrupted edit was not resent"),
+	]);
+	const reopened = await repo.open(stored.metadata, context);
+	const recovered = await DecoratorSession.create({ session: reopened, studio: broker, models });
 	cleanup.push(() => recovered.close());
 	await recovered.lane.waitForIdle(context);
+	expect((await recovered.harness.getTools(context)).every((tool) => tool.replay === "never")).toBe(true);
 	expect(fake.state.commands).toHaveLength(1);
-	expect(fake.state.commands[0]?.expectedRevision).toBe("1");
-	expect(fake.state.snapshot.objects[0]?.position).toEqual([4, 2, 0]);
-	expect((await recovered.studio.journal.records())[0]?.state).toBe("rejected");
+	const entries = await recovered.lane.findEntries({ order: "oldestFirst" }, context);
+	expect(
+		entries.some((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.isError),
+	).toBe(true);
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-1", rotation: [0, 0, 1] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("New request saved"),
+	]);
+	await prompt(recovered, "Rotate the chair");
+	await recovered.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(2);
 });

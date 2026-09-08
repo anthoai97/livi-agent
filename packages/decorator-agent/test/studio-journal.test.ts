@@ -1,9 +1,8 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { MemorySessionRepo } from "@earendil-works/pi-agent-core/harness/session";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { StudioCommandResult, StudioSnapshot } from "../src/services/studio.ts";
-import { StudioBroker } from "../src/studio-broker.ts";
-import { readStudioJournal, restoreStudioJournal, StudioJournal } from "../src/studio-journal.ts";
+import { StudioJournal } from "../src/studio-journal.ts";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -78,80 +77,60 @@ async function fixture() {
 	return { repo, session, journal, input, saved, binding };
 }
 
-it("atomically settles identical concurrent acknowledgements and never replaces a committed result", async () => {
+it("stores Studio's supplied saved result without crossvalidating unrelated room changes", async () => {
+	const { journal, input, saved, session, repo } = await fixture();
+	await journal.prepare(input);
+	await journal.dispatch(saved.commandId, new AbortController().signal);
+	saved.snapshot.geometry.height = 8;
+	saved.snapshot.objects.push({ ...saved.snapshot.objects[0]!, id: "new-object", name: "New furniture" });
+	saved.snapshot.objects[0]!.name = "Updated Studio label";
+	const settled = await journal.settle(saved);
+	expect(settled.state).toBe("committed");
+	expect(settled.result).toEqual(saved);
+	await session.close(context);
+	const reopened = await repo.open(session.metadata, context);
+	expect((await new StudioJournal(reopened).get(saved.commandId))?.result).toEqual(saved);
+});
+
+it("keeps unknown replies transient and preserves the supplied error", async () => {
+	const { journal, input, saved, session, repo } = await fixture();
+	await journal.prepare(input);
+	await journal.dispatch(saved.commandId, new AbortController().signal);
+	const result: StudioCommandResult = {
+		commandId: saved.commandId,
+		status: "unknown",
+		message: "Studio connection dropped after dispatch",
+	};
+	expect((await journal.settle(result)).result).toEqual(result);
+	await session.close(context);
+	const reopened = await repo.open(session.metadata, context);
+	expect(await new StudioJournal(reopened).records()).toEqual([]);
+});
+
+it("reports Studio's saved result even when the optional undo history cannot persist", async () => {
+	const { journal, input, saved, session } = await fixture();
+	await journal.prepare(input);
+	await journal.dispatch(saved.commandId, new AbortController().signal);
+	vi.spyOn(session, "setValue").mockRejectedValue(new Error("History storage unavailable"));
+	expect(await journal.settle(saved)).toMatchObject({ state: "committed", result: saved });
+	expect((await journal.get(saved.commandId))?.result).toEqual(saved);
+	expect(await journal.mutationBlocked(input.operationId)).toBe(false);
+});
+
+it("discards finished request context and unknown results without removing saved history", async () => {
 	const { journal, input, saved } = await fixture();
 	await journal.prepare(input);
 	await journal.dispatch(saved.commandId, new AbortController().signal);
-	const settled = await Promise.all([journal.settle(saved), journal.settle(structuredClone(saved))]);
-	expect(settled[0]).toEqual(settled[1]);
-	expect(settled[0]?.state).toBe("committed");
-	await expect(
-		journal.settle({
-			commandId: saved.commandId,
-			status: "rejected",
-			error: { code: "save_rejected", message: "Conflicting result" },
-		}),
-	).rejects.toThrow("Conflicting");
-	expect((await journal.get(saved.commandId))?.result).toEqual(saved);
-});
-
-it.each(["changed_rotation", "nonfinite", "wrong_action", "wrong_design", "identity", "unrelated_object"])(
-	"keeps invalid %s saved evidence unknown",
-	async (kind) => {
-		const { journal, input, saved } = await fixture();
-		await journal.prepare(input);
-		await journal.dispatch(saved.commandId, new AbortController().signal);
-		if (kind === "changed_rotation") saved.after!.rotation = [0, 0, 1];
-		if (kind === "nonfinite") saved.before.position = [NaN, 1, 0];
-		if (kind === "wrong_action") saved.after!.position = [3, 1, 0];
-		if (kind === "wrong_design") saved.snapshot.designId = "another-design";
-		if (kind === "identity") saved.snapshot.objects[0]!.name = "Replacement object";
-		if (kind === "unrelated_object") saved.snapshot.objects.push({ ...saved.snapshot.objects[0]!, id: "extra" });
-		await expect(journal.settle(saved)).rejects.toThrow();
-		expect((await journal.get(saved.commandId))?.state).toBe("outcome_unknown");
-	},
-);
-
-it("refuses unpublished results and leaves cancellation terminal across restore", async () => {
-	const { journal, input, saved, session, repo } = await fixture();
-	await journal.prepare(input);
-	await expect(journal.settle(saved)).rejects.toThrow("unpublished");
-	const cancel = new AbortController();
-	cancel.abort();
-	expect((await journal.dispatch(saved.commandId, cancel.signal)).state).toBe("cancelled_before_send");
-	await session.close(context);
-	const reopened = await repo.open(session.metadata, context);
-	const broker = new StudioBroker();
-	cleanup.push(() => broker.close());
-	const restored = await restoreStudioJournal(reopened, broker);
-	expect((await restored.get(saved.commandId))?.state).toBe("cancelled_before_send");
-	expect(broker.getState(input.command.binding).busy).toBe(false);
-});
-
-it("inventories and fences uncertain commands in an unopened conversation without creating a lane", async () => {
-	const { journal, input, saved, session, repo } = await fixture();
+	await journal.settle({ commandId: saved.commandId, status: "unknown", message: "No reply" });
+	await journal.blockMutations(input.operationId);
+	await journal.discardAdmission(input.operationId);
+	expect(await journal.admission(input.operationId)).toBeUndefined();
+	expect(await journal.planning(input.operationId, input.turnId)).toBeUndefined();
+	expect(await journal.mutationBlocked(input.operationId)).toBe(false);
+	expect(await journal.records()).toEqual([]);
 	await journal.prepare(input);
 	await journal.dispatch(saved.commandId, new AbortController().signal);
-	await session.close(context);
-	const reopened = await repo.open(session.metadata, context);
-	const broker = new StudioBroker();
-	cleanup.push(() => broker.close());
-	await restoreStudioJournal(reopened, broker);
-	expect(await readStudioJournal(reopened)).toMatchObject({
-		binding: input.command.binding,
-		records: [{ state: "outcome_unknown" }],
-	});
-	expect(broker.getState(input.command.binding).busy).toBe(true);
-	expect(await reopened.branch("main", context)).toBeUndefined();
-	expect(() => broker.claim("another-conversation", input.command.binding)).toThrow("Another conversation");
-});
-
-it("does not prepare missing turn evidence or alter the immutable payload on replay", async () => {
-	const { journal, input } = await fixture();
-	await expect(journal.prepare({ ...input, turnId: "missing" })).rejects.toThrow("planning evidence");
-	await journal.prepare(input);
-	await expect(journal.prepare({ ...input, command: { ...input.command, objectId: "other" } })).rejects.toThrow(
-		"identity conflict",
-	);
-	expect((await journal.records())[0]?.command).toEqual(input.command);
+	await journal.settle(saved);
+	await journal.discardAdmission(input.operationId);
+	expect((await journal.get(saved.commandId))?.result).toEqual(saved);
 });
