@@ -531,7 +531,7 @@ function productIds(payload: unknown): string[] {
 function isReplacementRequest(query: string | undefined): boolean {
 	return (
 		/\b(replace|replacement)\b/i.test(query ?? "") ||
-		(/\bswap\b/i.test(query ?? "") && !/\b(positions?|places?)\b/i.test(query ?? ""))
+		(/\bswap\b/i.test(query ?? "") && !/\bswap\s+(?:(?:the|their)\s+)?(?:positions?|places?)\b/i.test(query ?? ""))
 	);
 }
 

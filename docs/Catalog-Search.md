@@ -36,7 +36,7 @@ Read-only database inspection found:
 
 Validation evidence:
 
-- `pnpm check` passes. Decorator suite: 81 passing tests. Server suite: 27 passing tests, one explicit local pgvector skip. No UI changes.
+- `pnpm check` passes. Decorator suite: 82 passing tests. Server suite: 27 passing tests, one explicit local pgvector skip. No UI changes.
 
 - Disposable PostgreSQL tests cover read-only permissions, text ranking, 80-candidate limits, pagination and category aliases. A pgvector integration test explicitly skips when the local extension is unavailable (this machine's PostgreSQL 14 lacks it).
 - Synthetic model tests cover whole-pool validation, ranking candidate 80 first, malformed/fabricated evidence, cancellation, unindexed offset 80, and advancing past 80 rejected candidates.

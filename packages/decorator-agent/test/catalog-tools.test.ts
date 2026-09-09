@@ -850,3 +850,30 @@ it("grounds exact object names and punctuation without blocking an independent p
 	);
 	expect(fake!.state.commands).toHaveLength(1);
 });
+
+it("blocks pre-search mutations for a product swap requested in the same position", async () => {
+	const { runtime, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });
+	const remove = createStudioTools().find((tool) => tool.name === "remove_object")!;
+	await expect(
+		remove.execute(
+			"call",
+			{ objectId: "sofa-1" },
+			() => {},
+			{
+				studio: runtime.studio,
+				planning: {
+					operationId: "operation",
+					turnId: "turn",
+					binding: fake!.binding,
+					snapshot: fake!.state.snapshot,
+					action: null,
+					unavailable: null,
+					originalQuery: "Swap the sofa with a yellow sectional in the same position",
+				},
+			},
+			invocation,
+			context,
+		),
+	).rejects.toThrow(/mutation_blocked/);
+	expect(fake!.state.commands).toEqual([]);
+});
