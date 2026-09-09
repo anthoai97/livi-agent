@@ -46,7 +46,8 @@ textarea::placeholder { color: #92988a; }
 .composer-actions button, .welcome button { background: #405f48; color: #fff; border-color: #405f48; font-size: 12px; }
 .composer-actions button:hover:enabled, .welcome button:hover:enabled { background: #324d39; }
 .error { color: #9c4437; background: #fff0e9; border-radius: 7px; padding: 12px; font-size: 12px; line-height: 1.6; }
-.studio-panel { border-bottom: 1px solid #e1e4da; padding: 16px 32px; font-size: 12px; }
+.studio-panel { border-bottom: 1px solid #e1e4da; padding: 16px 32px; font-size: 12px; max-height: 160px; overflow-y: auto; flex-shrink: 0; }
+.studio-panel > .muted { overflow-wrap: anywhere; }
 .studio-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .studio-heading strong { overflow-wrap: anywhere; }
 .studio-phase { color: #496c51; background: #eef1e9; border-radius: 20px; padding: 4px 9px; white-space: nowrap; }
@@ -68,6 +69,16 @@ textarea::placeholder { color: #92988a; }
 .catalog-card-missing { margin: 0; color: #8b8f9a; font-size: 12px; }
 .catalog-card-link, .message .catalog-card-link { color: #5b4dff; font-size: 13px; font-weight: 600; text-decoration: none; margin-top: 6px; }
 .catalog-card-link:hover, .message .catalog-card-link:hover { text-decoration: underline; }
+@media (min-width: 1000px) {
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 250px; grid-template-rows: auto minmax(0, 1fr) auto; }
+  main > header { grid-column: 1 / -1; }
+  .studio-panel { grid-column: 2; grid-row: 2 / 4; min-height: 0; max-height: none; border-bottom: 0; border-left: 1px solid #e1e4da; padding: 20px 16px; }
+  .studio-heading { flex-wrap: wrap; gap: 8px; }
+  .studio-controls { flex-direction: column; align-items: stretch; }
+  .studio-controls select { flex: none; min-width: 0; width: 100%; }
+  .transcript { grid-column: 1; grid-row: 2; min-height: 0; }
+  main > footer { grid-column: 1; grid-row: 3; justify-self: center; }
+}
 @media (max-width: 650px) {
   .app { grid-template-columns: 130px minmax(0, 1fr); }
   aside { padding: 20px 10px 14px; gap: 15px; }
