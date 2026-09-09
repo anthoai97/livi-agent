@@ -5,9 +5,54 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { startLiviServer } from "../livi-server/src/server.js";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "../packages/ai/dist/index.js";
+import { type CatalogProduct, createMemoryCatalogAccess } from "../packages/decorator-agent/src/catalog.ts";
 import { JsonStudioAdapter } from "./studio-smoke/adapter.js";
 import { eventually } from "./studio-smoke/connection.js";
 import { readRoom } from "./studio-smoke/room.js";
+
+function catalogProduct(catalogId: string, fields: Partial<CatalogProduct> & { name: string }): CatalogProduct {
+	return {
+		catalogId,
+		imageUrl: null,
+		productUrl: null,
+		imageRef: null,
+		dimensions: null,
+		price: null,
+		category: null,
+		style: null,
+		color: null,
+		materials: null,
+		shape: null,
+		availableColors: null,
+		description: null,
+		reasons: [],
+		...fields,
+	};
+}
+
+const catalog = createMemoryCatalogAccess([
+	catalogProduct("yellow-haven", {
+		name: "Haven Yellow Sectional Sofa",
+		category: "sectional_sofa",
+		color: "yellow",
+		imageUrl: "https://cdn.example/haven.jpg",
+		productUrl: "https://shop.example/haven",
+		price: { amountMinor: 49999, currency: "USD" },
+		dimensions: { width: 2.8, depth: 1.6, height: 0.9, unit: "m" },
+		description: "A yellow sectional sofa",
+	}),
+	catalogProduct("yellow-cove", {
+		name: "Cove Yellow Sectional",
+		category: "sectional",
+		color: "yellow",
+	}),
+	catalogProduct("yellow-bend", {
+		name: "Bend Yellow L-Shaped Sectional",
+		category: "sectional_sofa",
+		color: "yellow",
+		shape: "L-shaped",
+	}),
+]);
 
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
 const faux = fauxProvider({
@@ -25,7 +70,7 @@ faux.setResponses([
 	fauxAssistantMessage("An interrupted answer that will be regenerated. ".repeat(40)),
 	fauxAssistantMessage("Recovered answer after server restart."),
 ]);
-let server = await startLiviServer({ dataDirectory: directory, port: 0, models });
+let server = await startLiviServer({ dataDirectory: directory, port: 0, models, catalog });
 const browser = await chromium.launch({
 	headless: true,
 	...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}),
@@ -65,7 +110,7 @@ try {
 	const port = server.port;
 	const identity = server.serverId;
 	await server.close();
-	server = await startLiviServer({ dataDirectory: directory, port, models });
+	server = await startLiviServer({ dataDirectory: directory, port, models, catalog });
 	assert.equal(server.serverId, identity);
 	await page.getByText("Recovered answer after server restart.", { exact: true }).waitFor();
 	assert.equal(await page.getByText("Recover this browser question.", { exact: true }).count(), 1);
@@ -146,13 +191,52 @@ try {
 	assert.deepEqual(adapter.snapshot.objects[0]!.position, [2, 1, 0]);
 	await page.getByRole("button", { name: "Disconnect design", exact: true }).click();
 	await page.getByText("No design attached", { exact: true }).waitFor();
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { color: "yellow", category: "sectional" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Here are yellow sectional sofas to consider for your room."),
+	]);
+	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+	await page
+		.getByRole("textbox", { name: "Message", exact: true })
+		.fill("Can you replace the current sofa with a yello sectional sofa");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Here are yellow sectional sofas to consider for your room.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	const cards = page.locator("[data-catalog-id]");
+	assert.equal(await cards.count(), 3);
+	assert.equal(await page.locator("[data-catalog-id='yellow-bend']").count(), 1);
+	assert.equal(await page.getByRole("heading", { name: "Haven Yellow Sectional Sofa", exact: true }).count(), 1);
+	assert.equal(await page.getByRole("heading", { name: "Cove Yellow Sectional", exact: true }).count(), 1);
+	assert.match(await page.locator("[data-catalog-id='yellow-haven'] .catalog-card-price").innerText(), /499\.99/);
+	assert.equal(await page.getByText("Price unavailable", { exact: true }).count(), 2);
+	assert.equal(await page.getByRole("link", { name: "View product", exact: true }).count(), 1);
+	assert.equal(await page.getByRole("button", { name: /add|replace|change sofa/i }).count(), 0);
+	assert.equal(await page.locator(".message.toolResult").count(), 0, "Raw tool results must not enter chat");
+	assert.equal(await page.locator(".message").filter({ hasText: '"searchId"' }).count(), 0);
+	const catalogIds = await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-catalog-id")));
+	await page.reload();
+	await page.getByText("Here are yellow sectional sofas to consider for your room.", { exact: true }).waitFor();
+	assert.deepEqual(
+		await page
+			.locator("[data-catalog-id]")
+			.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-catalog-id"))),
+		catalogIds,
+	);
+	assert.match(await page.locator("[data-catalog-id='yellow-haven'] .catalog-card-price").innerText(), /499\.99/);
 	await mkdir("artifacts", { recursive: true });
-	await page.screenshot({ path: "artifacts/chat-browser.png", fullPage: true });
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.locator("[data-catalog-id='yellow-bend']").scrollIntoViewIfNeeded();
+	await page.screenshot({ path: "artifacts/chat-browser.png" });
+	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-desktop.png" });
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.screenshot({ path: "artifacts/chat-browser-mobile.png", fullPage: true });
+	await page.locator("[data-catalog-id='yellow-bend']").scrollIntoViewIfNeeded();
+	await page.screenshot({ path: "artifacts/chat-browser-mobile.png" });
+	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-mobile.png" });
 	assert.deepEqual(errors, []);
 	console.log(
-		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, named object without selection, saved response, lost reply, and next explicit edit after reconnect. Synthetic JSON saves only.",
+		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, and catalog cards from saved details. Synthetic JSON saves only.",
 	);
 } finally {
 	await browser.close();

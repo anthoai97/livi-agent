@@ -662,6 +662,8 @@ it("upgrades an old empty allowlist while keeping an admitted generation's captu
 				"rotate_object",
 				"remove_object",
 				"get_room_context",
+				"search_catalog",
+				"get_product_details",
 			]);
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
@@ -992,7 +994,17 @@ it("never replays an old safe pending effect after restart, including model retr
 	const recovered = await DecoratorSession.create({ session: reopened, studio: broker, models });
 	cleanup.push(() => recovered.close());
 	await recovered.lane.waitForIdle(context);
-	expect((await recovered.harness.getTools(context)).every((tool) => tool.replay === "never")).toBe(true);
+	const recoveredTools = await recovered.harness.getTools(context);
+	expect(
+		recoveredTools
+			.filter((tool) => ["move_object", "rotate_object", "remove_object", "get_room_context"].includes(tool.name))
+			.every((tool) => tool.replay === "never"),
+	).toBe(true);
+	expect(
+		recoveredTools
+			.filter((tool) => tool.name === "search_catalog" || tool.name === "get_product_details")
+			.every((tool) => tool.replay === "safe"),
+	).toBe(true);
 	expect(fake.state.commands).toHaveLength(1);
 	const entries = await recovered.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(
@@ -1106,9 +1118,17 @@ it("keeps the pinned selection after a failed open drive so recovery can resume 
 	await expect.poll(() => errors.map((error) => error.message)).toEqual(["Simulated drive failure"]);
 	expect((await runtime.lane.inspectExecution(context)).current?.id).toBe(admitted.operationId);
 	expect(await runtime.lane.getResult(admitted.operationId, context)).toBeUndefined();
-	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({
+		value: fake.binding,
+		action,
+		originalQuery: "Replace this sofa",
+	});
 	await runtime.studio.service.bind({ designId: "different-room", tabId: "different-tab" }, context);
-	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({
+		value: fake.binding,
+		action,
+		originalQuery: "Replace this sofa",
+	});
 	errors.length = 0;
 	await runtime.close();
 	faux.setResponses([

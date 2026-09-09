@@ -11,11 +11,13 @@ import type {
 } from "./services/studio.ts";
 
 export interface StudioAdmission {
+	originalQuery?: string;
 	value: StudioBinding | null;
 	action: AgentPromptAction | null;
 }
 
 export interface StudioPlanningSnapshot {
+	originalQuery?: string;
 	operationId: string;
 	turnId: string;
 	binding: StudioBinding | null;
@@ -70,8 +72,9 @@ export class StudioJournal {
 		operationId: string,
 		context: Context = BACKGROUND_CONTEXT,
 		action: AgentPromptAction | null = null,
+		originalQuery?: string,
 	): Promise<void> {
-		const record: StudioAdmission = { value: await this.binding(context), action };
+		const record: StudioAdmission = { value: await this.binding(context), action, originalQuery };
 		this.admissions.set(operationId, record);
 		try {
 			await this.session.setValue(admissionAddress(operationId), record, BACKGROUND_CONTEXT);
