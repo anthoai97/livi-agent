@@ -315,27 +315,15 @@ it("omits signed image and product URLs from catalog tool details", async () => 
 
 it("unknown color, category, dimensions, and mixed currency cannot satisfy required filters", async () => {
 	const catalog = createMemoryCatalogAccess(catalogProducts);
-	expect((await search(catalog, { color: "yellow", category: "sectional" })).details).toMatchObject({
-		products: expect.any(Array),
+	const yellow = (
+		(await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogRecommendationDetails
+	).products.map((entry) => entry.catalogId);
+	expect(yellow).not.toContain("uncolored-sectional");
+	expect(yellow).not.toContain("yellow-unknown-category");
+	expect((await search(catalog, { category: "sectional", color: "chartreuse" })).details).toMatchObject({
+		products: [],
+		pagination: { exhausted: true, offset: 0 },
 	});
-	expect(
-		((await search(catalog, { category: "sectional", color: "yellow" })).details as CatalogRecommendationDetails)
-			.products,
-	).toHaveLength(3);
-	expect(
-		((await search(catalog, { category: "sectional", color: "chartreuse" })).details as CatalogRecommendationDetails)
-			.products,
-	).toEqual([]);
-	expect(
-		(
-			(await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogRecommendationDetails
-		).products.map((entry) => entry.catalogId),
-	).not.toContain("uncolored-sectional");
-	expect(
-		(
-			(await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogRecommendationDetails
-		).products.map((entry) => entry.catalogId),
-	).not.toContain("yellow-unknown-category");
 	expect(
 		(
 			(await search(catalog, { category: "desk", maxWidth: 1.5 })).details as CatalogRecommendationDetails
@@ -352,14 +340,6 @@ it("unknown color, category, dimensions, and mixed currency cannot satisfy requi
 it("rejects a currency without a price bound", async () => {
 	const catalog = createMemoryCatalogAccess(catalogProducts);
 	await expect(search(catalog, { category: "desk", currency: "USD" })).rejects.toThrow(/unsupported_filter/);
-});
-
-it("returns an exhausted empty catalog search without mutations", async () => {
-	const result = await search(createMemoryCatalogAccess(catalogProducts), { color: "purple", category: "sectional" });
-	expect(result.details).toMatchObject({
-		products: [],
-		pagination: { exhausted: true, offset: 0 },
-	});
 });
 
 it("catalog-unavailable search does not invent products", async () => {

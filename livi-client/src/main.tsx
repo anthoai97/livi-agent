@@ -30,6 +30,10 @@ interface Connection {
 	management: SessionManagement;
 }
 
+function studioKey(item: { designId: string; tabId: string }) {
+	return JSON.stringify([item.designId, item.tabId]);
+}
+
 function App() {
 	const [connection, setConnection] = useState<Connection>();
 	const [status, setStatus] = useState("Connecting");
@@ -247,14 +251,16 @@ function App() {
 		}
 	}
 
-	async function changeStudio(detach = false) {
+	async function changeStudio(binding: { designId: string; tabId: string } | null) {
 		if (!studio || studioChanging || operation) return;
-		const target = studios.find((item) => JSON.stringify([item.designId, item.tabId]) === studioChoice);
-		if (!detach && (!target || target.phase !== "ready")) return;
+		if (binding) {
+			const target = studios.find((item) => item.designId === binding.designId && item.tabId === binding.tabId);
+			if (!target || target.phase !== "ready") return;
+		}
 		setStudioChanging(true);
 		setError("");
 		try {
-			await studio.bind(detach ? null : { designId: target!.designId, tabId: target!.tabId }, context);
+			await studio.bind(binding, context);
 			setStudioChoice("");
 		} catch (failure) {
 			setError(failure instanceof Error ? failure.message : String(failure));
@@ -270,6 +276,10 @@ function App() {
 	const selectedObjects =
 		studioState?.snapshot?.objects.filter((object) => studioState.snapshot?.selectedObjectIds.includes(object.id)) ??
 		[];
+	const selectedStudio = studios.find((item) => studioKey(item) === studioChoice);
+	let studioPhase = "Offline";
+	if (connection && !studioState) studioPhase = "Select a conversation";
+	else if (connection && studioState?.phase === "ready") studioPhase = "Ready";
 
 	return (
 		<div className="app">
@@ -324,13 +334,7 @@ function App() {
 								: "No design attached"}
 						</strong>
 						<output className="studio-phase" aria-live="polite">
-							{!connection
-								? "Offline"
-								: !studioState
-									? "Select a conversation"
-									: studioState.phase === "ready"
-										? "Ready"
-										: "Offline"}
+							{studioPhase}
 						</output>
 					</div>
 					{studioState?.binding && <p className="muted">Design {studioState.binding.designId}</p>}
@@ -344,20 +348,23 @@ function App() {
 						>
 							<option value="">Choose a Studio…</option>
 							{studios.map((item) => (
-								<option
-									key={JSON.stringify([item.designId, item.tabId])}
-									value={JSON.stringify([item.designId, item.tabId])}
-									disabled={item.phase !== "ready"}
-								>
+								<option key={studioKey(item)} value={studioKey(item)} disabled={item.phase !== "ready"}>
 									{item.label} · {item.designId} · {item.phase}
 								</option>
 							))}
 						</select>
-						<button type="button" disabled={bindingLocked || !studioChoice} onClick={() => void changeStudio()}>
+						<button
+							type="button"
+							disabled={bindingLocked || !selectedStudio}
+							onClick={() => {
+								if (selectedStudio)
+									void changeStudio({ designId: selectedStudio.designId, tabId: selectedStudio.tabId });
+							}}
+						>
 							{studioState?.binding ? "Change design" : "Attach design"}
 						</button>
 						{studioState?.binding && (
-							<button type="button" disabled={bindingLocked} onClick={() => void changeStudio(true)}>
+							<button type="button" disabled={bindingLocked} onClick={() => void changeStudio(null)}>
 								Disconnect design
 							</button>
 						)}
@@ -569,11 +576,6 @@ function CatalogCard({ product, recommended }: { product: CatalogProduct; recomm
 	const dimensions = formatDimensions(product);
 	const reason = product.reasons[0];
 	const showImage = Boolean(product.imageUrl) && !imageFailed;
-	const missing = [
-		product.price ? null : "Price unavailable",
-		dimensions ? null : "Dimensions unavailable",
-		showImage ? null : "Image unavailable",
-	].filter((label): label is string => label !== null);
 	return (
 		<li className="catalog-card" data-catalog-id={product.catalogId}>
 			<div className="catalog-card-image">
@@ -596,13 +598,8 @@ function CatalogCard({ product, recommended }: { product: CatalogProduct; recomm
 				) : (
 					<p className="catalog-card-missing">Price unavailable</p>
 				)}
-				{missing
-					.filter((label) => label !== "Price unavailable")
-					.map((label) => (
-						<p key={label} className="catalog-card-missing">
-							{label}
-						</p>
-					))}
+				{!dimensions ? <p className="catalog-card-missing">Dimensions unavailable</p> : null}
+				{!showImage ? <p className="catalog-card-missing">Image unavailable</p> : null}
 				{product.productUrl ? (
 					<a className="catalog-card-link" href={product.productUrl} target="_blank" rel="noreferrer">
 						View product

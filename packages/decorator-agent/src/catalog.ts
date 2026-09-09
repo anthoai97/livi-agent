@@ -250,10 +250,16 @@ export function metreDimension(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-export function httpUrl(value: unknown): string | null {
+function stableSourceUrl(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	if (!trimmed || isTemporarySignedUrl(trimmed)) return null;
+	return trimmed;
+}
+
+export function httpUrl(value: unknown): string | null {
+	const trimmed = stableSourceUrl(value);
+	if (!trimmed) return null;
 	try {
 		const parsed = new URL(trimmed);
 		return parsed.protocol === "http:" || parsed.protocol === "https:" ? trimmed : null;
@@ -264,9 +270,8 @@ export function httpUrl(value: unknown): string | null {
 
 /** Stable source identity. Keeps s3:// and unsigned http(s); drops expiring signed URLs. */
 export function catalogImageRef(value: unknown): string | null {
-	if (typeof value !== "string") return null;
-	const trimmed = value.trim();
-	if (!trimmed || isTemporarySignedUrl(trimmed)) return null;
+	const trimmed = stableSourceUrl(value);
+	if (!trimmed) return null;
 	try {
 		const parsed = new URL(trimmed);
 		return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "s3:" ? trimmed : null;
@@ -617,30 +622,23 @@ export function mergeCatalogFollowUp(
 	const size = reference.dimensions?.[dimension] ?? null;
 	if (size === null)
 		throw new CatalogError("invalid_arguments", `The identified product has no verified ${dimension}`);
-	return {
-		request: {
-			...base,
-			...(dimension === "width"
-				? {
-						maxWidth: Math.min(size, base.maxWidth ?? size),
-						exclusiveMaxWidth: size <= (base.maxWidth ?? size) || base.exclusiveMaxWidth,
-					}
-				: dimension === "depth"
-					? {
-							maxDepth: Math.min(size, base.maxDepth ?? size),
-							exclusiveMaxDepth: size <= (base.maxDepth ?? size) || base.exclusiveMaxDepth,
-						}
-					: {
-							maxHeight: Math.min(size, base.maxHeight ?? size),
-							exclusiveMaxHeight: size <= (base.maxHeight ?? size) || base.exclusiveMaxHeight,
-						}),
-			excludeIds: base.excludeIds,
-			offset: 0,
-			limit: prior.pagination.limit,
-		},
-		searchId: prior.searchId,
-		shownIds: [],
+	const request: CatalogSearchRequest = {
+		...base,
+		excludeIds: base.excludeIds,
+		offset: 0,
+		limit: prior.pagination.limit,
 	};
+	if (dimension === "width") {
+		request.maxWidth = Math.min(size, base.maxWidth ?? size);
+		request.exclusiveMaxWidth = size <= (base.maxWidth ?? size) || base.exclusiveMaxWidth;
+	} else if (dimension === "depth") {
+		request.maxDepth = Math.min(size, base.maxDepth ?? size);
+		request.exclusiveMaxDepth = size <= (base.maxDepth ?? size) || base.exclusiveMaxDepth;
+	} else {
+		request.maxHeight = Math.min(size, base.maxHeight ?? size);
+		request.exclusiveMaxHeight = size <= (base.maxHeight ?? size) || base.exclusiveMaxHeight;
+	}
+	return { request, searchId: prior.searchId, shownIds: [] };
 }
 
 function pickFollowUpReference(

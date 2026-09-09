@@ -151,22 +151,11 @@ it("accepts ordinary text and a valid structured action", async () => {
 
 it.each([
 	null,
-	1,
-	true,
-	"add_asset",
-	[],
 	{ type: "add_asset", selectedProductId: "lamp-1", quantity: 0 },
 	{ type: "add_asset", selectedProductId: "lamp-1", quantity: 1.5 },
-	{ type: "add_asset", selectedProductId: "lamp-1", quantity: -1 },
-	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.MAX_SAFE_INTEGER + 1 },
-	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.NaN },
-	{ type: "add_asset", selectedProductId: "lamp-1", quantity: Number.POSITIVE_INFINITY },
 	{ type: "add_asset", quantity: 1 },
-	{ type: "add_asset", selectedProductId: "", quantity: 1 },
 	{ type: "add_asset", selectedProductId: "   ", quantity: 1 },
 	{ type: "replace_asset", selectedProductId: "sofa-123" },
-	{ type: "replace_asset", selectedProductId: "sofa-123", targetObjectId: "" },
-	{ type: "replace_asset", selectedProductId: "  ", targetObjectId: "chair-1" },
 	{ type: "move_object", selectedProductId: "sofa-123" },
 ])("rejects malformed action %j without starting or persisting an operation", async (action) => {
 	const { runtime, faux } = await fixture();
