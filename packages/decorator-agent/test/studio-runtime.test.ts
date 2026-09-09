@@ -42,6 +42,7 @@ function room(): StudioSnapshot {
 				position: [1, 2, 0],
 				rotation: [0, 0, 0],
 				scale: [1, 1, 1],
+				product: { catalogId: "catalog-chair", price: { amountMinor: 12999, currency: "USD" } },
 			},
 			{
 				id: "chair-2",
@@ -51,9 +52,11 @@ function room(): StudioSnapshot {
 				position: [3, 2, 0],
 				rotation: [0, 0, 0],
 				scale: [1, 1, 1],
+				product: { catalogId: "catalog-chair", price: null },
 			},
 		],
 		selectedObjectIds: ["chair-1"],
+		budget: { amountMinor: 500000, currency: "USD" },
 	};
 }
 
@@ -207,7 +210,7 @@ async function fixture(onDebug?: (event: string, fields: Record<string, unknown>
 		expect(errors).toEqual([]);
 	});
 	await runtime.studio.service.bind(fake.binding, context);
-	return { repo, stored, broker, fake, faux, models, runtime };
+	return { repo, stored, broker, fake, faux, models, runtime, errors };
 }
 
 async function prompt(runtime: DecoratorSession, message = "Move the selected chair") {
@@ -589,6 +592,7 @@ it("rejects nonfinite direct execution arguments before preparing a command", as
 		binding: fake.binding,
 		snapshot: fake.state.snapshot,
 		unavailable: null,
+		action: null,
 	});
 	const move = createStudioTools()[0]!;
 	await expect(
@@ -1003,4 +1007,133 @@ it("never replays an old safe pending effect after restart, including model retr
 	await prompt(recovered, "Rotate the chair");
 	await recovered.lane.waitForIdle(context);
 	expect(fake.state.commands).toHaveLength(2);
+});
+
+it("includes product, price, and budget facts in room planning without treating unknown as zero", async () => {
+	const { runtime, faux } = await fixture();
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"catalogId":"catalog-chair"');
+			expect(input.systemPrompt).toContain('"amountMinor":12999');
+			expect(input.systemPrompt).toContain('"amountMinor":500000');
+			expect(input.systemPrompt).toContain('"price":null');
+			expect(input.systemPrompt).not.toMatch(/"price":0\b/);
+			expect(input.systemPrompt).not.toMatch(/"budget":0\b/);
+			return fauxAssistantMessage("The priced chair is 129.99");
+		},
+	]);
+	await prompt(runtime, "What is in the room?");
+	await runtime.lane.waitForIdle(context);
+});
+
+it("does not retarget an admitted selection after the conversation attachment changes", async () => {
+	const { runtime, fake, faux } = await fixture();
+	const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "chair-1" };
+	faux.setResponses([
+		async (input) => {
+			expect(input.systemPrompt).toContain('"type":"replace_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"sofa-123"');
+			expect(input.systemPrompt).toContain('"targetObjectId":"chair-1"');
+			await runtime.studio.service.bind({ designId: "different-room", tabId: "different-tab" }, context);
+			return fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("wrong_binding");
+			expect(input.systemPrompt).toContain('"type":"replace_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"sofa-123"');
+			expect(input.systemPrompt).toContain('"targetObjectId":"chair-1"');
+			return fauxAssistantMessage("The attachment changed");
+		},
+	]);
+	expect(await runtime.controller.prompt({ message: "Replace this sofa", action }, context)).toMatchObject({
+		accepted: true,
+	});
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+});
+
+it("exposes a recovered selection without replaying room mutations", async () => {
+	const { runtime, repo, stored, broker, fake, faux, models } = await fixture();
+	const entered = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const action = { type: "add_asset" as const, selectedProductId: "lamp-1", quantity: 2 };
+	faux.setResponses([
+		async (input) => {
+			expect(input.systemPrompt).toContain('"type":"add_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"lamp-1"');
+			expect(input.systemPrompt).toContain('"quantity":2');
+			entered.resolve();
+			await release.promise;
+			return fauxAssistantMessage("Interrupted");
+		},
+	]);
+	const admitted = await runtime.controller.prompt({ message: "Add two lamps", action }, context);
+	if (!admitted.accepted) throw new Error("Expected admission");
+	await entered.promise;
+	await runtime.close();
+	release.resolve();
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"type":"add_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"lamp-1"');
+			expect(input.systemPrompt).toContain('"quantity":2');
+			expect(input.systemPrompt).toContain("Current request mutation block: true");
+			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			});
+		},
+		fauxAssistantMessage("The interrupted request cannot edit the room"),
+	]);
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		studio: broker,
+	});
+	cleanup.push(() => recovered.close());
+	await recovered.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(JSON.stringify(await recovered.lane.findEntries({ order: "oldestFirst" }, context))).toContain(
+		"mutation_blocked",
+	);
+});
+
+it("keeps the pinned selection after a failed open drive so recovery can resume it", async () => {
+	const { runtime, repo, stored, broker, fake, faux, models, errors } = await fixture();
+	const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "chair-1" };
+	vi.spyOn(runtime.lane, "drive").mockRejectedValueOnce(new Error("Simulated drive failure"));
+	const admitted = await runtime.controller.prompt({ message: "Replace this sofa", action }, context);
+	if (!admitted.accepted) throw new Error("Expected admission");
+	await expect.poll(() => errors.map((error) => error.message)).toEqual(["Simulated drive failure"]);
+	expect((await runtime.lane.inspectExecution(context)).current?.id).toBe(admitted.operationId);
+	expect(await runtime.lane.getResult(admitted.operationId, context)).toBeUndefined();
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	await runtime.studio.service.bind({ designId: "different-room", tabId: "different-tab" }, context);
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	errors.length = 0;
+	await runtime.close();
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"type":"replace_asset"');
+			expect(input.systemPrompt).toContain('"selectedProductId":"sofa-123"');
+			expect(input.systemPrompt).toContain('"targetObjectId":"chair-1"');
+			expect(input.systemPrompt).toContain('"designId":"simulated-room"');
+			expect(input.systemPrompt).toContain('"tabId":"simulated-tab"');
+			expect(input.systemPrompt).toContain("Current request mutation block: true");
+			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			});
+		},
+		fauxAssistantMessage("The interrupted request cannot edit the room"),
+	]);
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		studio: broker,
+	});
+	cleanup.push(() => recovered.close());
+	await recovered.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(JSON.stringify(await recovered.lane.findEntries({ order: "oldestFirst" }, context))).toContain(
+		"mutation_blocked",
+	);
 });

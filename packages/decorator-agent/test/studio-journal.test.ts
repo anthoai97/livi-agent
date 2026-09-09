@@ -37,12 +37,14 @@ async function fixture() {
 				position: [1, 1, 0],
 				rotation: [0, 0, 0],
 				scale: [1, 1, 1],
+				product: null,
 			},
 		],
+		budget: null,
 	};
 	await journal.setBinding(binding);
 	await journal.admit("operation");
-	await journal.plan({ operationId: "operation", turnId: "turn", binding, snapshot, unavailable: null });
+	await journal.plan({ operationId: "operation", turnId: "turn", binding, snapshot, unavailable: null, action: null });
 	const commandId = JSON.stringify([session.metadata.id, "invocation"]);
 	const before = {
 		position: snapshot.objects[0]!.position,
@@ -133,4 +135,13 @@ it("discards finished request context and unknown results without removing saved
 	await journal.settle(saved);
 	await journal.discardAdmission(input.operationId);
 	expect((await journal.get(saved.commandId))?.result).toEqual(saved);
+});
+
+it("persists the admitted selection across reopen", async () => {
+	const { journal, session, repo, binding } = await fixture();
+	const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "chair" };
+	await journal.admit("selection-operation", context, action);
+	await session.close(context);
+	const restored = new StudioJournal(await repo.open(session.metadata, context));
+	expect(await restored.admission("selection-operation")).toEqual({ value: binding, action });
 });

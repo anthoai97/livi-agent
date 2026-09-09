@@ -76,7 +76,13 @@
           "color": "red",
           "roughness": 0.7
         },
-        "catalogId": "same-chair-product"
+        "product": {
+          "catalogId": "same-chair-product",
+          "price": {
+            "amountMinor": 12900,
+            "currency": "USD"
+          }
+        }
       },
       {
         "id": "chair-blue-2",
@@ -106,10 +112,17 @@
           "color": "blue",
           "roughness": 0.7
         },
-        "catalogId": "same-chair-product"
+        "product": {
+          "catalogId": "same-chair-product",
+          "price": null
+        }
       }
     ],
     "selectedObjectIds": [],
+    "budget": {
+      "amountMinor": 500000,
+      "currency": "USD"
+    },
     "sourceMetadata": {
       "keep": "unrelated exported values stay intact"
     }

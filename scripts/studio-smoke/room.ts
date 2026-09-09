@@ -32,6 +32,14 @@ function vector(value: unknown, path: string, length = 3): asserts value is numb
 		throw new Error(`Fixture: ${path} needs ${length} finite numbers`);
 }
 
+function money(value: unknown, path: string): void {
+	const amount = object(value, path);
+	if (typeof amount.currency !== "string" || !amount.currency.trim())
+		throw new Error(`Fixture: ${path}.currency is required`);
+	if (typeof amount.amountMinor !== "number" || !Number.isSafeInteger(amount.amountMinor) || amount.amountMinor < 0)
+		throw new Error(`Fixture: ${path}.amountMinor must be a nonnegative integer; unknown values are null`);
+}
+
 export function validateSnapshot(value: unknown): asserts value is StudioSnapshot {
 	const room = object(value, "snapshot");
 	string(room.designId, "designId");
@@ -75,6 +83,15 @@ export function validateSnapshot(value: unknown): asserts value is StudioSnapsho
 			throw new Error(`Fixture: ${entry.id} requires positive scale/dimensions`);
 		if ((entry.rotation as number[])[0] !== 0 || (entry.rotation as number[])[1] !== 0)
 			throw new Error(`Fixture: ${entry.id} has unsupported non-yaw rotation`);
+		if (!Object.hasOwn(entry, "product"))
+			throw new Error(`Fixture: ${entry.id}.product is required (null if unknown; never omit or use 0)`);
+		if (entry.product !== null) {
+			const product = object(entry.product, `${entry.id}.product`);
+			string(product.catalogId, `${entry.id}.product.catalogId`);
+			if (!Object.hasOwn(product, "price"))
+				throw new Error(`Fixture: ${entry.id}.product.price is required (null if unknown; never omit or use 0)`);
+			if (product.price !== null) money(product.price, `${entry.id}.product.price`);
+		}
 	}
 	if (
 		!Array.isArray(room.selectedObjectIds) ||
@@ -82,6 +99,9 @@ export function validateSnapshot(value: unknown): asserts value is StudioSnapsho
 		new Set(room.selectedObjectIds).size !== room.selectedObjectIds.length
 	)
 		throw new Error("Fixture: selectedObjectIds must contain unique existing instance IDs");
+	if (!Object.hasOwn(room, "budget"))
+		throw new Error("Fixture: budget is required (null if unknown; never omit or use 0)");
+	if (room.budget !== null) money(room.budget, "budget");
 }
 
 export async function readRoom(path: string): Promise<RoomFixture> {

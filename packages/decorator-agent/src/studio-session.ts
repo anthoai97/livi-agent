@@ -154,6 +154,7 @@ export class StudioSessionRuntime {
 			binding,
 			snapshot,
 			unavailable,
+			action: admission?.action ?? null,
 		};
 		this.debug("context.ready", {
 			operationId: identity.operationId,
