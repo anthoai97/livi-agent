@@ -165,6 +165,29 @@ export class DecoratorSession implements RoutedSessionHandle {
 				context,
 			);
 			harness = created.harness;
+			if (process.env.LIVI_DEBUG_PROMPTS === "1") {
+				harness.hooks.on("before_payload", ({ model, payload, runId }) => {
+					try {
+						console.error(
+							JSON.stringify(
+								{
+									timestamp: new Date().toISOString(),
+									event: "llm.request",
+									conversationId: options.session.metadata.id,
+									operationId: runId,
+									model: model.id,
+									payload,
+								},
+								null,
+								2,
+							),
+						);
+					} catch {
+						// Debug output must not interrupt a model request.
+					}
+					return undefined;
+				});
+			}
 			const { open } = created;
 			if (open.some((operation) => operation.lane !== "main"))
 				throw new Error("Decorator sessions support only the main lane");
@@ -289,9 +312,16 @@ function parsePromptAction(action: unknown): { value: AgentPromptAction | null }
 	if (record.type === "replace_asset") {
 		if (!requiredId(record.selectedProductId)) return { error: "replace_asset requires selectedProductId" };
 		if (!requiredId(record.targetObjectId)) return { error: "replace_asset requires targetObjectId" };
+		if (!requiredId(record.designId)) return { error: "replace_asset requires the recommendation designId" };
+		if (!requiredId(record.expectedRevision)) return { error: "replace_asset requires the recommendation revision" };
+		if (record.expectedCatalogId !== null && !requiredId(record.expectedCatalogId))
+			return { error: "replace_asset requires the prior catalog ID or null" };
 		return {
 			value: {
 				type: "replace_asset",
+				designId: record.designId,
+				expectedRevision: record.expectedRevision,
+				expectedCatalogId: record.expectedCatalogId,
 				selectedProductId: record.selectedProductId,
 				targetObjectId: record.targetObjectId,
 			},

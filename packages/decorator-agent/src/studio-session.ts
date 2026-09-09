@@ -191,17 +191,6 @@ export class StudioSessionRuntime {
 				message: `No result received from Studio: ${error instanceof Error ? error.message : String(error)}`,
 			};
 		}
-		if (result.status === "unknown") {
-			await this.journal.blockMutations(record.operationId);
-			this.debug("mutation.blocked", {
-				operationId: record.operationId,
-				turnId: record.turnId,
-				invocationId: record.invocationId,
-				commandId: record.command.commandId,
-				mutationBlocked: true,
-				cause: "outcome_unknown",
-			});
-		}
 		return this.journal.settle(result);
 	}
 

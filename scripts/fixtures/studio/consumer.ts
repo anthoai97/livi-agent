@@ -40,7 +40,7 @@ const command: StudioCommand = {
 	binding: { designId: "example-design", tabId: "example-tab" },
 	expectedRevision: "example-revision",
 	objectId: "placed-chair-1",
-	action: { type: "rotate", rotation: [0, 0, Math.PI / 2] },
+	action: { type: "replace", catalogId: "new-catalog-chair", expectedCatalogId: "catalog-chair" },
 };
 console.log(
 	STUDIO_CONTRACT_VERSION,

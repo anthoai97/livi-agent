@@ -9,6 +9,7 @@ const toolNames = [
 	"move_object",
 	"rotate_object",
 	"remove_object",
+	"replace_object",
 	"get_room_context",
 	"search_catalog",
 	"get_product_details",

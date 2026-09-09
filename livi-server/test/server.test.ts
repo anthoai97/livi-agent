@@ -348,7 +348,14 @@ test(
 		const room = await first.management.create({}, context);
 		const attached = await attach(first, room.sessionId);
 		const generating = once(child, "message");
-		const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "sofa-placed" };
+		const action = {
+			type: "replace_asset" as const,
+			designId: "simulated-room",
+			expectedRevision: "1",
+			expectedCatalogId: null,
+			selectedProductId: "sofa-123",
+			targetObjectId: "sofa-placed",
+		};
 		const accepted = await attached.controller.prompt({ message: "Keep my room design", action }, context);
 		assert.equal(accepted.accepted, true);
 		assert.deepEqual((await generating)[0], { type: "generating" });

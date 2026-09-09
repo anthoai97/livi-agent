@@ -236,6 +236,7 @@ if (values.help) {
 								"get_room_context",
 								"move_object",
 								"remove_object",
+								"replace_object",
 								"rotate_object",
 								"search_catalog",
 							],

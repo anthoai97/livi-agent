@@ -139,7 +139,14 @@ it("discards finished request context and unknown results without removing saved
 
 it("persists the admitted selection across reopen", async () => {
 	const { journal, session, repo, binding } = await fixture();
-	const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "chair" };
+	const action = {
+		type: "replace_asset" as const,
+		selectedProductId: "sofa-123",
+		targetObjectId: "chair",
+		designId: binding.designId,
+		expectedRevision: "1",
+		expectedCatalogId: null,
+	};
 	await journal.admit("selection-operation", context, action);
 	await session.close(context);
 	const restored = new StudioJournal(await repo.open(session.metadata, context));

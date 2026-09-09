@@ -629,42 +629,29 @@ it("mergeCatalogFollowUp keeps filters and applies cheaper or smaller bounds", (
 });
 
 for (const order of ["before", "after", "after_error"] as const) {
-	it(`blocks an erroneous remove ${order} replacement search, but allows a new independent room request`, async () => {
+	it(`forwards a requested move ${order} catalog search without locking the request`, async () => {
 		const { runtime, faux, fake } = await session({
 			catalog: createMemoryCatalogAccess(catalogProducts),
 			studio: true,
 		});
 		const searchCall = fauxToolCall("search_catalog", {
-			purpose: "replacement",
-			targetObjectId: "sofa-1",
+			purpose: "recommendation",
 			category: "sectional",
-			color: "yellow",
 			...(order === "after_error" ? { currency: "USD" } : {}),
 		});
-		const removeCall = fauxToolCall("remove_object", { objectId: "sofa-1" });
+		const moveCall = fauxToolCall("move_object", { objectId: "sofa-1", position: [2, 2, 0] });
 		faux.setResponses([
-			fauxAssistantMessage(order === "before" ? [removeCall, searchCall] : [searchCall, removeCall], {
+			fauxAssistantMessage(order === "before" ? [moveCall, searchCall] : [searchCall, moveCall], {
 				stopReason: "toolUse",
 			}),
-			fauxAssistantMessage("Recommendations only."),
-			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "sofa-1", position: [2, 2, 0] }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage("Moved."),
+			fauxAssistantMessage("Moved the sofa and searched for options."),
 		]);
-		await runtime.controller.prompt(
-			{ message: "Can you replace the current sofa with a yello sectional sofa" },
-			context,
-		);
-		await runtime.lane.waitForIdle(context);
-		expect(fake?.state.commands).toEqual([]);
-		expect(fake?.state.snapshot.objects).toHaveLength(1);
-		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
-		expect(JSON.stringify(entries)).toContain("mutation_blocked");
-		await runtime.controller.prompt({ message: "Move the sofa to [2,2,0]" }, context);
+		await runtime.controller.prompt({ message: "Move the sofa to [2,2,0] and show sectional options" }, context);
 		await runtime.lane.waitForIdle(context);
 		expect(fake?.state.commands).toHaveLength(1);
-		expect(fake?.state.commands[0]?.action.type).toBe("move");
+		expect(fake?.state.commands[0]?.action).toEqual({ type: "move", position: [2, 2, 0] });
+		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+		expect(JSON.stringify(entries)).not.toContain("mutation_blocked");
 	});
 }
 
@@ -826,33 +813,6 @@ it("grounds exact object names and punctuation without blocking an independent p
 		context,
 	);
 	expect(fake!.state.commands).toHaveLength(1);
-});
-
-it("blocks pre-search mutations for a product swap requested in the same position", async () => {
-	const { runtime, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });
-	const remove = createStudioTools().find((tool) => tool.name === "remove_object")!;
-	await expect(
-		remove.execute(
-			"call",
-			{ objectId: "sofa-1" },
-			() => {},
-			{
-				studio: runtime.studio,
-				planning: {
-					operationId: "operation",
-					turnId: "turn",
-					binding: fake!.binding,
-					snapshot: fake!.state.snapshot,
-					action: null,
-					unavailable: null,
-					originalQuery: "Swap the sofa with a yellow sectional in the same position",
-				},
-			},
-			invocation,
-			context,
-		),
-	).rejects.toThrow(/mutation_blocked/);
-	expect(fake!.state.commands).toEqual([]);
 });
 
 it("defaults an explicit price bound to USD without adding a room budget", async () => {

@@ -44,7 +44,7 @@ function fixture(rows: DesignAssetRegistryRow[]) {
 	return { pool, sql, client };
 }
 
-test("vector retrieval preserves database similarity order and requests only eight plus a probe", async () => {
+test("vector retrieval preserves database similarity order and requests only six plus a probe", async () => {
 	const rows = [row(79), ...Array.from({ length: 79 }, (_, i) => row(i))];
 	const { pool, sql } = fixture(rows);
 	let queries = 0;
@@ -60,14 +60,14 @@ test("vector retrieval preserves database similarity order and requests only eig
 	const first = await access.search({ query: "yellow sectional", category: "sectional" });
 	assert.equal(queries, 1);
 	assert.equal(sql.length, 1);
-	assert.deepEqual(sql[0]?.values.slice(-2), [9, 0]);
+	assert.deepEqual(sql[0]?.values.slice(-2), [7, 0]);
 	assert.deepEqual(
 		first.products.map((p) => p.catalogId),
-		rows.slice(0, 8).map((r) => r.asset_id),
+		rows.slice(0, 6).map((r) => r.asset_id),
 	);
 	assert.deepEqual(first.products[0]?.price, { amountMinor: 49999, currency: "USD" });
-	assert.deepEqual(first.retrieval, { strategy: "vector", candidateCount: 9, candidateLimit: 9, truncated: true });
-	assert.deepEqual(first.pagination, { limit: 8, offset: 0, nextOffset: 8, exhausted: false });
+	assert.deepEqual(first.retrieval, { strategy: "vector", candidateCount: 7, candidateLimit: 7, truncated: true });
+	assert.deepEqual(first.pagination, { limit: 6, offset: 0, nextOffset: 6, exhausted: false });
 });
 
 test("vector pagination and exclusion continuation preserve an initial offset", async () => {
@@ -76,9 +76,9 @@ test("vector pagination and exclusion continuation preserve an initial offset", 
 	const boundary = await access.search({ query: "sofa", offset: 78 });
 	assert.deepEqual(
 		boundary.products.map((p) => p.catalogId),
-		Array.from({ length: 8 }, (_, i) => `Product-${78 + i}`),
+		Array.from({ length: 6 }, (_, i) => `Product-${78 + i}`),
 	);
-	assert.equal(boundary.pagination.nextOffset, 86);
+	assert.equal(boundary.pagination.nextOffset, 84);
 	const tail = await access.search({ query: "sofa", offset: 96 });
 	assert.equal(tail.products.length, 5);
 	assert.equal(tail.pagination.exhausted, true);
