@@ -196,6 +196,10 @@ test("search SQL parameterizes filters and excludes decor and deleted rows", () 
 	assert.equal(compiled.values[1], "yellow");
 	assert.match(compiled.text, /\$1/);
 	assert.match(compiled.text, /\$2/);
+	const exclusive = searchSql(
+		normalizeCatalogSearchRequest({ category: "desk", maxWidth: 1.2, exclusiveMaxWidth: true }),
+	);
+	assert.match(exclusive.text, /width < \$/);
 });
 
 test("malformed catalog URLs fail closed and local pools do not use TLS", async () => {

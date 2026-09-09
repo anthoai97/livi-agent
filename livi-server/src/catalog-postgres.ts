@@ -171,9 +171,9 @@ export function searchSql(request: NormalizedCatalogSearch): {
 	}
 	if (request.style) where.push(tokenPredicate("style", add(request.style.toLowerCase())));
 	if (request.material) where.push(tokenPredicate("materials", add(request.material.toLowerCase())));
-	pushDimension(where, add, "width", request.minWidth, request.maxWidth);
-	pushDimension(where, add, "depth", request.minDepth, request.maxDepth);
-	pushDimension(where, add, "height", request.minHeight, request.maxHeight);
+	pushDimension(where, add, "width", request.minWidth, request.maxWidth, request.exclusiveMaxWidth);
+	pushDimension(where, add, "depth", request.minDepth, request.maxDepth, request.exclusiveMaxDepth);
+	pushDimension(where, add, "height", request.minHeight, request.maxHeight, request.exclusiveMaxHeight);
 	if (request.excludeIds.length) where.push(`NOT (asset_id::text = ANY(${add(request.excludeIds)}::text[]))`);
 	const roomParam = add(request.roomCategories);
 	const limitParam = add(request.limit + 1);
@@ -211,11 +211,12 @@ function pushDimension(
 	column: string,
 	min: number | undefined,
 	max: number | undefined,
+	exclusiveMax = false,
 ): void {
 	if (min === undefined && max === undefined) return;
 	where.push(`${column} IS NOT NULL AND ${column} > 0`);
 	if (min !== undefined) where.push(`${column} >= ${add(min)}`);
-	if (max !== undefined) where.push(`${column} <= ${add(max)}`);
+	if (max !== undefined) where.push(`${column} ${exclusiveMax ? "<" : "<="} ${add(max)}`);
 }
 
 async function catalogQuery(

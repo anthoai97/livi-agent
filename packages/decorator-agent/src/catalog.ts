@@ -72,6 +72,9 @@ export interface CatalogResolvedConstraints {
 	maxPrice?: CatalogMoney;
 	query?: string;
 	excludeIds?: string[];
+	exclusiveMaxWidth?: boolean;
+	exclusiveMaxDepth?: boolean;
+	exclusiveMaxHeight?: boolean;
 }
 
 export interface CatalogRoomHint {
@@ -96,6 +99,9 @@ export interface CatalogSearchRequest {
 	offset?: number;
 	excludeIds?: string[];
 	room?: CatalogRoomHint;
+	exclusiveMaxWidth?: boolean;
+	exclusiveMaxDepth?: boolean;
+	exclusiveMaxHeight?: boolean;
 }
 
 export interface CatalogSearchResult {
@@ -106,6 +112,21 @@ export interface CatalogSearchResult {
 
 export interface CatalogDetailResult {
 	product: CatalogProduct;
+}
+
+export const CATALOG_RECOMMENDATION_KIND = "catalog_recommendations";
+export type CatalogFollowUp = "show_more" | "cheaper" | "smaller";
+export type CatalogDimensionName = "width" | "depth" | "height";
+
+export interface CatalogRecommendationDetails {
+	kind: typeof CATALOG_RECOMMENDATION_KIND;
+	searchId: string;
+	products: CatalogProduct[];
+	resolvedConstraints: CatalogResolvedConstraints;
+	pagination: CatalogPagination;
+	shownIds: string[];
+	binding: { designId: string } | null;
+	followUp: CatalogFollowUp | null;
 }
 
 export interface CatalogAccess {
@@ -132,6 +153,9 @@ export interface NormalizedCatalogSearch {
 	offset: number;
 	excludeIds: string[];
 	roomCategories: string[];
+	exclusiveMaxWidth: boolean;
+	exclusiveMaxDepth: boolean;
+	exclusiveMaxHeight: boolean;
 }
 
 const SECTIONAL_CATEGORIES = ["sectional", "sectional_sofa"];
@@ -278,6 +302,9 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 		offset,
 		excludeIds,
 		roomCategories,
+		exclusiveMaxWidth: request.exclusiveMaxWidth === true,
+		exclusiveMaxDepth: request.exclusiveMaxDepth === true,
+		exclusiveMaxHeight: request.exclusiveMaxHeight === true,
 	};
 }
 
@@ -290,9 +317,33 @@ export function catalogProductMatches(product: CatalogProduct, request: Normaliz
 	if (request.color && !tokenMatches([product.color, ...(product.availableColors ?? [])], request.color)) return false;
 	if (request.style && !tokenMatches([product.style], request.style)) return false;
 	if (request.material && !tokenMatches([product.materials], request.material)) return false;
-	if (!dimensionMatches(product.dimensions?.width ?? null, request.minWidth, request.maxWidth)) return false;
-	if (!dimensionMatches(product.dimensions?.depth ?? null, request.minDepth, request.maxDepth)) return false;
-	if (!dimensionMatches(product.dimensions?.height ?? null, request.minHeight, request.maxHeight)) return false;
+	if (
+		!dimensionMatches(
+			product.dimensions?.width ?? null,
+			request.minWidth,
+			request.maxWidth,
+			request.exclusiveMaxWidth,
+		)
+	)
+		return false;
+	if (
+		!dimensionMatches(
+			product.dimensions?.depth ?? null,
+			request.minDepth,
+			request.maxDepth,
+			request.exclusiveMaxDepth,
+		)
+	)
+		return false;
+	if (
+		!dimensionMatches(
+			product.dimensions?.height ?? null,
+			request.minHeight,
+			request.maxHeight,
+			request.exclusiveMaxHeight,
+		)
+	)
+		return false;
 	if (request.minPrice || request.maxPrice) {
 		if (!product.price) return false;
 		const currency = product.price.currency.trim().toUpperCase();
@@ -328,7 +379,174 @@ export function catalogResolvedConstraints(request: NormalizedCatalogSearch): Ca
 		...(request.maxPrice ? { maxPrice: request.maxPrice } : {}),
 		...(request.query ? { query: request.query } : {}),
 		...(request.excludeIds.length ? { excludeIds: request.excludeIds } : {}),
+		...(request.exclusiveMaxWidth ? { exclusiveMaxWidth: true } : {}),
+		...(request.exclusiveMaxDepth ? { exclusiveMaxDepth: true } : {}),
+		...(request.exclusiveMaxHeight ? { exclusiveMaxHeight: true } : {}),
 	};
+}
+
+export function isCatalogRecommendationDetails(value: unknown): value is CatalogRecommendationDetails {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	if (record.kind !== CATALOG_RECOMMENDATION_KIND || typeof record.searchId !== "string" || !record.searchId.trim())
+		return false;
+	if (!Array.isArray(record.products) || !record.products.every(isCatalogProductSnapshot)) return false;
+	if (!record.resolvedConstraints || typeof record.resolvedConstraints !== "object") return false;
+	if (!record.pagination || typeof record.pagination !== "object") return false;
+	const pagination = record.pagination as Record<string, unknown>;
+	if (
+		typeof pagination.limit !== "number" ||
+		typeof pagination.offset !== "number" ||
+		typeof pagination.exhausted !== "boolean"
+	)
+		return false;
+	if (!Array.isArray(record.shownIds) || !record.shownIds.every((id) => typeof id === "string" && id.length > 0))
+		return false;
+	if (record.binding !== null) {
+		if (!record.binding || typeof record.binding !== "object") return false;
+		const binding = record.binding as Record<string, unknown>;
+		if (typeof binding.designId !== "string" || !binding.designId.trim()) return false;
+	}
+	if (
+		record.followUp !== null &&
+		record.followUp !== "show_more" &&
+		record.followUp !== "cheaper" &&
+		record.followUp !== "smaller"
+	)
+		return false;
+	return true;
+}
+
+function isCatalogProductSnapshot(value: unknown): value is CatalogProduct {
+	if (!value || typeof value !== "object") return false;
+	const product = value as Record<string, unknown>;
+	return typeof product.catalogId === "string" && product.catalogId.length > 0 && typeof product.name === "string";
+}
+
+export function requestFromConstraints(
+	constraints: CatalogResolvedConstraints,
+	room?: CatalogRoomHint,
+): CatalogSearchRequest {
+	return {
+		query: constraints.query,
+		category: constraints.category?.[0],
+		color: constraints.color,
+		style: constraints.style,
+		material: constraints.material,
+		minWidth: constraints.minWidth,
+		maxWidth: constraints.maxWidth,
+		minDepth: constraints.minDepth,
+		maxDepth: constraints.maxDepth,
+		minHeight: constraints.minHeight,
+		maxHeight: constraints.maxHeight,
+		minPrice: constraints.minPrice,
+		maxPrice: constraints.maxPrice,
+		exclusiveMaxWidth: constraints.exclusiveMaxWidth,
+		exclusiveMaxDepth: constraints.exclusiveMaxDepth,
+		exclusiveMaxHeight: constraints.exclusiveMaxHeight,
+		room,
+	};
+}
+
+export function mergeCatalogFollowUp(
+	prior: CatalogRecommendationDetails,
+	followUp: CatalogFollowUp,
+	options: {
+		referenceCatalogId?: string;
+		dimension?: CatalogDimensionName;
+		room?: CatalogRoomHint;
+		candidates?: CatalogProduct[];
+	} = {},
+): { request: CatalogSearchRequest; searchId: string; shownIds: string[] } {
+	const base = requestFromConstraints(prior.resolvedConstraints, options.room);
+	if (followUp === "show_more") {
+		return {
+			request: {
+				...base,
+				excludeIds: prior.shownIds,
+				offset: 0,
+				limit: prior.pagination.limit,
+			},
+			searchId: prior.searchId,
+			shownIds: [...prior.shownIds],
+		};
+	}
+	const reference = pickFollowUpReference(prior, options.referenceCatalogId, options.candidates);
+	if (followUp === "cheaper") {
+		if (!reference.price)
+			throw new CatalogError(
+				"invalid_arguments",
+				"Cheaper needs an identified product with a verified same-currency price",
+			);
+		if (reference.price.amountMinor < 1)
+			throw new CatalogError("invalid_arguments", "Nothing is cheaper than the identified product's verified price");
+		return {
+			request: {
+				...base,
+				maxPrice: { amountMinor: reference.price.amountMinor - 1, currency: reference.price.currency },
+				excludeIds: undefined,
+				offset: 0,
+				limit: prior.pagination.limit,
+			},
+			searchId: prior.searchId,
+			shownIds: [],
+		};
+	}
+	const dimension = options.dimension ?? uniqueKnownDimension(reference);
+	if (!dimension)
+		throw new CatalogError(
+			"invalid_arguments",
+			"Smaller needs an identified product and dimension (width, depth, or height)",
+		);
+	const size = reference.dimensions?.[dimension] ?? null;
+	if (size === null)
+		throw new CatalogError("invalid_arguments", `The identified product has no verified ${dimension}`);
+	return {
+		request: {
+			...base,
+			...(dimension === "width"
+				? { maxWidth: size, exclusiveMaxWidth: true }
+				: dimension === "depth"
+					? { maxDepth: size, exclusiveMaxDepth: true }
+					: { maxHeight: size, exclusiveMaxHeight: true }),
+			excludeIds: undefined,
+			offset: 0,
+			limit: prior.pagination.limit,
+		},
+		searchId: prior.searchId,
+		shownIds: [],
+	};
+}
+
+function pickFollowUpReference(
+	prior: CatalogRecommendationDetails,
+	catalogId?: string,
+	candidates?: CatalogProduct[],
+): CatalogProduct {
+	const pool = [...(candidates ?? []), ...prior.products];
+	if (catalogId) {
+		const match = pool.find((product) => product.catalogId === catalogId);
+		if (!match) throw new CatalogError("invalid_arguments", "Identify a product from the current recommendations");
+		return match;
+	}
+	const unique = uniqueProducts(pool);
+	if (unique.length === 1) return unique[0]!;
+	if (prior.products.length === 1) return prior.products[0]!;
+	throw new CatalogError("invalid_arguments", "Identify which recommended product to compare");
+}
+
+function uniqueProducts(products: CatalogProduct[]): CatalogProduct[] {
+	const seen = new Set<string>();
+	return products.filter((product) => {
+		if (seen.has(product.catalogId)) return false;
+		seen.add(product.catalogId);
+		return true;
+	});
+}
+
+function uniqueKnownDimension(product: CatalogProduct): CatalogDimensionName | undefined {
+	const known = (["width", "depth", "height"] as const).filter((field) => product.dimensions?.[field] != null);
+	return known.length === 1 ? known[0] : undefined;
 }
 
 function catalogReasons(product: CatalogProduct, request: NormalizedCatalogSearch): string[] {
@@ -367,11 +585,16 @@ function rankQuery(product: CatalogProduct, request: NormalizedCatalogSearch): n
 	return needles.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
 }
 
-function dimensionMatches(value: number | null, min: number | undefined, max: number | undefined): boolean {
+function dimensionMatches(
+	value: number | null,
+	min: number | undefined,
+	max: number | undefined,
+	exclusiveMax = false,
+): boolean {
 	if (min === undefined && max === undefined) return true;
 	if (value === null) return false;
 	if (min !== undefined && value < min) return false;
-	if (max !== undefined && value > max) return false;
+	if (max !== undefined && (exclusiveMax ? value >= max : value > max)) return false;
 	return true;
 }
 

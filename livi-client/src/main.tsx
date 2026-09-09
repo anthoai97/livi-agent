@@ -3,6 +3,10 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { Client, createClientServiceTransport } from "@earendil-works/pi-client";
 import {
 	AgentController,
+	type CatalogMoney,
+	type CatalogProduct,
+	type CatalogRecommendationDetails,
+	isCatalogRecommendationDetails,
 	SessionDirectory,
 	SessionManagement,
 	type SessionSummary,
@@ -195,14 +199,7 @@ function App() {
 
 	const snapshot = transcript?.snapshot;
 	const operation = snapshot?.operation;
-	const messages =
-		snapshot?.transcript.flatMap((entry) =>
-			entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")
-				? [{ id: entry.id, message: entry.message }]
-				: [],
-		) ?? [];
-	if (operation?.streamingMessage)
-		messages.push({ id: `stream-${operation.id}`, message: operation.streamingMessage });
+	const messages = transcriptItems(snapshot?.transcript ?? [], operation?.streamingMessage);
 
 	async function newChat() {
 		if (!connection || busy) return;
@@ -387,19 +384,15 @@ function App() {
 							)}
 						</div>
 					)}
-					{messages.map(({ id, message }) => {
-						const content = "content" in message ? message.content : undefined;
-						const text =
-							typeof content === "string"
-								? content
-								: Array.isArray(content)
-									? content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
-									: "";
-						if (!text) return null;
+					{messages.map((item) => {
+						if (item.kind === "cards") {
+							return <CatalogCards key={item.id} details={item.details} />;
+						}
 						return (
-							<article key={id} className={`message ${message.role}`}>
-								<h2>{message.role === "user" ? "You" : "Livi"}</h2>
-								<Markdown skipHtml>{text}</Markdown>
+							<article key={item.id} className={`message ${item.role}`}>
+								<h2>{item.role === "user" ? "You" : "Livi"}</h2>
+								<Markdown skipHtml>{item.text}</Markdown>
+								{item.details ? <CatalogCards details={item.details} /> : null}
 							</article>
 						);
 					})}
@@ -459,6 +452,163 @@ function App() {
 				</footer>
 			</main>
 		</div>
+	);
+}
+
+type TranscriptEntry = NonNullable<TranscriptState["snapshot"]>["transcript"][number];
+type StreamingMessage = NonNullable<NonNullable<TranscriptState["snapshot"]>["operation"]>["streamingMessage"];
+type ChatItem =
+	| { id: string; kind: "message"; role: "user" | "assistant"; text: string; details?: CatalogRecommendationDetails }
+	| { id: string; kind: "cards"; details: CatalogRecommendationDetails };
+
+function messageText(message: { content?: unknown }): string {
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) =>
+			part &&
+			typeof part === "object" &&
+			"type" in part &&
+			part.type === "text" &&
+			"text" in part &&
+			typeof part.text === "string"
+				? [part.text]
+				: [],
+		)
+		.join("\n");
+}
+
+function catalogDetails(entry: TranscriptEntry): CatalogRecommendationDetails | undefined {
+	if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.isError) return undefined;
+	if (entry.message.toolName !== "search_catalog") return undefined;
+	return isCatalogRecommendationDetails(entry.message.details) ? entry.message.details : undefined;
+}
+
+function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessage): ChatItem[] {
+	const items: ChatItem[] = [];
+	let pending: { id: string; details: CatalogRecommendationDetails } | undefined;
+	const takePending = () => {
+		const current = pending;
+		pending = undefined;
+		return current?.details;
+	};
+	for (const entry of entries) {
+		const cards = catalogDetails(entry);
+		if (cards) {
+			pending = { id: entry.id, details: cards };
+			continue;
+		}
+		if (entry.type !== "message") continue;
+		if (entry.message.role !== "user" && entry.message.role !== "assistant") continue;
+		const text = messageText(entry.message);
+		if (!text) continue;
+		if (entry.message.role === "user" && pending) {
+			items.push({ id: pending.id, kind: "cards", details: pending.details });
+			pending = undefined;
+		}
+		items.push({
+			id: entry.id,
+			kind: "message",
+			role: entry.message.role,
+			text,
+			details: entry.message.role === "assistant" ? takePending() : undefined,
+		});
+	}
+	if (streaming) {
+		const text = messageText(streaming);
+		if (text) {
+			items.push({
+				id: "stream",
+				kind: "message",
+				role: "assistant",
+				text,
+				details: takePending(),
+			});
+		}
+	}
+	if (pending) items.push({ id: pending.id, kind: "cards", details: pending.details });
+	return items;
+}
+
+function formatCatalogPrice(price: CatalogMoney): string | null {
+	try {
+		return new Intl.NumberFormat(undefined, { style: "currency", currency: price.currency }).format(
+			price.amountMinor / 100,
+		);
+	} catch {
+		return `${(price.amountMinor / 100).toFixed(2)} ${price.currency}`;
+	}
+}
+
+function formatDimensions(product: CatalogProduct): string | null {
+	const dimensions = product.dimensions;
+	if (!dimensions) return null;
+	const parts = [
+		dimensions.width != null ? `W ${dimensions.width} ${dimensions.unit}` : null,
+		dimensions.depth != null ? `D ${dimensions.depth} ${dimensions.unit}` : null,
+		dimensions.height != null ? `H ${dimensions.height} ${dimensions.unit}` : null,
+	].filter((part): part is string => part !== null);
+	return parts.length ? parts.join(" · ") : null;
+}
+
+function CatalogCards({ details }: { details: CatalogRecommendationDetails }) {
+	return (
+		<ul className="catalog-results" aria-label="Catalog recommendations">
+			{details.products.map((product, index) => (
+				<CatalogCard key={product.catalogId} product={product} recommended={index === 0} />
+			))}
+		</ul>
+	);
+}
+
+function CatalogCard({ product, recommended }: { product: CatalogProduct; recommended: boolean }) {
+	const [imageFailed, setImageFailed] = useState(false);
+	const price = product.price ? formatCatalogPrice(product.price) : null;
+	const dimensions = formatDimensions(product);
+	const reason = product.reasons[0];
+	const showImage = Boolean(product.imageUrl) && !imageFailed;
+	const missing = [
+		product.price ? null : "Price unavailable",
+		dimensions ? null : "Dimensions unavailable",
+		showImage ? null : "Image unavailable",
+	].filter((label): label is string => label !== null);
+	return (
+		<li className="catalog-card" data-catalog-id={product.catalogId}>
+			<div className="catalog-card-image">
+				{recommended ? <span className="catalog-badge">Recommended</span> : null}
+				{showImage ? (
+					<img src={product.imageUrl!} alt="" onError={() => setImageFailed(true)} />
+				) : (
+					<div className="catalog-card-fallback" aria-hidden="true" />
+				)}
+			</div>
+			<div className="catalog-card-body">
+				<h3>{product.name}</h3>
+				{product.description || reason ? (
+					<p className="catalog-card-copy">{product.description || reason}</p>
+				) : null}
+				{dimensions ? <p className="catalog-card-meta">{dimensions}</p> : null}
+				{reason && product.description ? <p className="catalog-card-reason">{reason}</p> : null}
+				{price ? (
+					<p className="catalog-card-price">{price}</p>
+				) : (
+					<p className="catalog-card-missing">Price unavailable</p>
+				)}
+				{missing
+					.filter((label) => label !== "Price unavailable")
+					.map((label) => (
+						<p key={label} className="catalog-card-missing">
+							{label}
+						</p>
+					))}
+				{product.productUrl ? (
+					<a className="catalog-card-link" href={product.productUrl} target="_blank" rel="noreferrer">
+						View product
+					</a>
+				) : null}
+			</div>
+		</li>
 	);
 }
 

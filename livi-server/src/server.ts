@@ -8,7 +8,13 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Models } from "@earendil-works/pi-ai";
 import { Server, type ServerHost, SessionNotFoundError } from "@earendil-works/pi-server";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { createServerServices, DecoratorSession, StudioBroker, unavailableCatalogAccess } from "@livi/decorator-agent";
+import {
+	type CatalogAccess,
+	createServerServices,
+	DecoratorSession,
+	StudioBroker,
+	unavailableCatalogAccess,
+} from "@livi/decorator-agent";
 import type { Pool } from "pg";
 import { WebSocket, WebSocketServer } from "ws";
 import { createCatalogPool, createPostgresCatalogAccess, parseCatalogDatabaseUrl } from "./catalog-postgres.js";
@@ -26,6 +32,7 @@ export interface LiviServerOptions {
 	studioAllowedOrigins?: string[];
 	debug?: boolean;
 	catalogDatabaseUrl?: string;
+	catalog?: CatalogAccess;
 }
 
 function debugOrigin(origin: string | undefined) {
@@ -72,8 +79,8 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 	});
 	const reportError = options.onError ?? ((error: Error) => console.error(error));
 	let catalogPool: Pool | undefined;
-	let catalog = unavailableCatalogAccess();
-	if (catalogUrl) {
+	let catalog = options.catalog ?? unavailableCatalogAccess();
+	if (!options.catalog && catalogUrl) {
 		catalogPool = createCatalogPool(catalogUrl);
 		catalog = createPostgresCatalogAccess(catalogPool);
 	}

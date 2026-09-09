@@ -5,8 +5,9 @@ import { afterEach, expect, it } from "vitest";
 import {
 	CatalogError,
 	type CatalogProduct,
-	type CatalogSearchResult,
+	type CatalogRecommendationDetails,
 	createMemoryCatalogAccess,
+	mergeCatalogFollowUp,
 } from "../src/catalog.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
 import type {
@@ -47,6 +48,12 @@ const yellowSofa = product("yellow-sofa", { name: "Yellow Sofa", category: "sofa
 const navySectional = product("navy-sectional", { name: "Navy Sectional", category: "sectional", color: "navy" });
 const uncoloredSectional = product("uncolored-sectional", { name: "Plain Sectional", category: "sectional" });
 const unknownCategory = product("yellow-unknown-category", { name: "Yellow Unknown", color: "yellow" });
+const usdMini = product("usd-250", {
+	name: "USD Desk Mini",
+	category: "desk",
+	price: { amountMinor: 25000, currency: "USD" },
+	dimensions: { width: 0.8, depth: 0.5, height: 0.7, unit: "m" },
+});
 const usdCheap = product("usd-400", {
 	name: "USD Desk",
 	category: "desk",
@@ -78,6 +85,7 @@ const catalogProducts = [
 	navySectional,
 	uncoloredSectional,
 	unknownCategory,
+	usdMini,
 	usdCheap,
 	usdExpensive,
 	eurDesk,
@@ -220,7 +228,7 @@ async function session(options: { catalog?: ReturnType<typeof createMemoryCatalo
 		await runtime.close();
 	});
 	if (fake && broker) await runtime.studio.service.bind(fake.binding, context);
-	return { runtime, faux, fake };
+	return { runtime, faux, fake, repo, stored, models, catalog };
 }
 
 const invocation = {
@@ -246,10 +254,12 @@ async function search(catalog: ReturnType<typeof createMemoryCatalogAccess>, arg
 
 it("search_catalog matches yellow sectionals including L-shaped and excludes distractors", async () => {
 	const result = await search(createMemoryCatalogAccess(catalogProducts), { color: "yellow", category: "sectional" });
-	const payload = result.details as CatalogSearchResult;
+	const payload = result.details as CatalogRecommendationDetails;
 	expect(JSON.parse(result.content[0] && result.content[0].type === "text" ? result.content[0].text : "")).toEqual(
 		payload,
 	);
+	expect(payload.kind).toBe("catalog_recommendations");
+	expect(payload.searchId).toBe("invocation");
 	expect(payload.products.map((entry) => entry.catalogId).sort()).toEqual([
 		"yellow-l-shaped",
 		"yellow-sectional",
@@ -292,7 +302,7 @@ it("omits signed image and product URLs from catalog tool details", async () => 
 	const result = await search(createMemoryCatalogAccess([signed, s3]), { color: "yellow", category: "sectional" });
 	const serialized = JSON.stringify(result.details);
 	expect(serialized).not.toMatch(/secret-token|X-Amz-Signature|sig=abc|[?&]se=/i);
-	const payload = result.details as CatalogSearchResult;
+	const payload = result.details as CatalogRecommendationDetails;
 	expect(payload.products.find((entry) => entry.catalogId === "signed-sectional")).toMatchObject({
 		imageUrl: null,
 		imageRef: null,
@@ -310,32 +320,34 @@ it("unknown color, category, dimensions, and mixed currency cannot satisfy requi
 		products: expect.any(Array),
 	});
 	expect(
-		((await search(catalog, { category: "sectional", color: "yellow" })).details as CatalogSearchResult).products,
+		((await search(catalog, { category: "sectional", color: "yellow" })).details as CatalogRecommendationDetails)
+			.products,
 	).toHaveLength(3);
 	expect(
-		((await search(catalog, { category: "sectional", color: "chartreuse" })).details as CatalogSearchResult).products,
+		((await search(catalog, { category: "sectional", color: "chartreuse" })).details as CatalogRecommendationDetails)
+			.products,
 	).toEqual([]);
 	expect(
-		((await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogSearchResult).products.map(
-			(entry) => entry.catalogId,
-		),
+		(
+			(await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogRecommendationDetails
+		).products.map((entry) => entry.catalogId),
 	).not.toContain("uncolored-sectional");
 	expect(
-		((await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogSearchResult).products.map(
-			(entry) => entry.catalogId,
-		),
+		(
+			(await search(catalog, { color: "yellow", category: "sectional" })).details as CatalogRecommendationDetails
+		).products.map((entry) => entry.catalogId),
 	).not.toContain("yellow-unknown-category");
 	expect(
-		((await search(catalog, { category: "desk", maxWidth: 1.5 })).details as CatalogSearchResult).products.map(
-			(entry) => entry.catalogId,
-		),
-	).toEqual(["usd-400"]);
+		(
+			(await search(catalog, { category: "desk", maxWidth: 1.5 })).details as CatalogRecommendationDetails
+		).products.map((entry) => entry.catalogId),
+	).toEqual(["usd-400", "usd-250"]);
 	expect(
 		(
 			(await search(catalog, { category: "desk", maxAmountMinor: 50000, currency: "USD" }))
-				.details as CatalogSearchResult
+				.details as CatalogRecommendationDetails
 		).products.map((entry) => entry.catalogId),
-	).toEqual(["usd-400"]);
+	).toEqual(["usd-400", "usd-250"]);
 });
 
 it("explains unsupported price filters instead of dropping them", async () => {
@@ -437,7 +449,7 @@ it("replacement prompt searches yellow sectionals and does not change the room",
 	).toBe(false);
 	const details =
 		toolResult?.type === "message" && toolResult.message.role === "toolResult"
-			? (toolResult.message.details as CatalogSearchResult)
+			? (toolResult.message.details as CatalogRecommendationDetails)
 			: undefined;
 	expect(details?.products.map((entry) => entry.catalogId).sort()).toEqual([
 		"yellow-l-shaped",
@@ -447,7 +459,194 @@ it("replacement prompt searches yellow sectionals and does not change the room",
 	expect(details?.products.map((entry) => entry.catalogId)).not.toEqual(
 		expect.arrayContaining(["yellow-sofa", "navy-sectional"]),
 	);
+	expect(details?.kind).toBe("catalog_recommendations");
+	expect(details?.searchId).toEqual(expect.any(String));
+	expect(details?.shownIds.sort()).toEqual(["yellow-l-shaped", "yellow-sectional", "yellow-sectional-sofa"]);
 	expect(fake?.state.commands).toEqual([]);
 	expect(fake?.state.snapshot.objects.map((object) => object.id)).toEqual(["sofa-1"]);
 	expect(await runtime.studio.journal.records()).toEqual([]);
+});
+
+function searchDetails(entries: Awaited<ReturnType<DecoratorSession["lane"]["findEntries"]>>) {
+	const toolResult = [...entries]
+		.reverse()
+		.find(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "toolResult" &&
+				entry.message.toolName === "search_catalog" &&
+				!entry.message.isError,
+		);
+	if (toolResult?.type !== "message" || toolResult.message.role !== "toolResult") return undefined;
+	return toolResult.message.details as CatalogRecommendationDetails;
+}
+
+it("follow-ups cheaper, smaller, and show more change only the intended constraint", async () => {
+	const catalog = createMemoryCatalogAccess(catalogProducts);
+	const { runtime, faux, fake } = await session({ catalog, studio: true });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", limit: 1 }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Here is a desk."),
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "show_more" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("More desks."),
+		fauxAssistantMessage(
+			fauxToolCall("search_catalog", {
+				category: "desk",
+				maxAmountMinor: 50000,
+				currency: "USD",
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Priced desks."),
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "cheaper", referenceCatalogId: "usd-400" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Cheaper desks."),
+		fauxAssistantMessage(
+			fauxToolCall("search_catalog", { followUp: "smaller", referenceCatalogId: "usd-400", dimension: "width" }),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Smaller desks."),
+	]);
+	expect(await runtime.controller.prompt({ message: "Show desks" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const first = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(first?.products.map((product) => product.catalogId)).toEqual(["eur-100"]);
+	expect(first?.pagination.limit).toBe(1);
+	expect(await runtime.controller.prompt({ message: "Show more" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const more = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(more?.searchId).toBe(first?.searchId);
+	expect(more?.followUp).toBe("show_more");
+	expect(more?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(more?.products.map((product) => product.catalogId)).not.toContain("eur-100");
+	expect(more?.shownIds).toEqual(
+		expect.arrayContaining([...(first?.shownIds ?? []), ...(more?.products.map((p) => p.catalogId) ?? [])]),
+	);
+	expect(await runtime.controller.prompt({ message: "USD desks under 500" }, context)).toMatchObject({
+		accepted: true,
+	});
+	await runtime.lane.waitForIdle(context);
+	const priced = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(priced?.searchId).not.toBe(first?.searchId);
+	expect(await runtime.controller.prompt({ message: "Cheaper than the 400 desk" }, context)).toMatchObject({
+		accepted: true,
+	});
+	await runtime.lane.waitForIdle(context);
+	const cheaper = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(cheaper?.searchId).toBe(priced?.searchId);
+	expect(cheaper?.followUp).toBe("cheaper");
+	expect(cheaper?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(cheaper?.resolvedConstraints.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
+	expect(cheaper?.products.map((product) => product.catalogId)).toEqual(["usd-250"]);
+	expect(await runtime.controller.prompt({ message: "Smaller width than the 400 desk" }, context)).toMatchObject({
+		accepted: true,
+	});
+	await runtime.lane.waitForIdle(context);
+	const smaller = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(smaller?.searchId).toBe(priced?.searchId);
+	expect(smaller?.followUp).toBe("smaller");
+	expect(smaller?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(smaller?.resolvedConstraints.maxWidth).toBe(1.2);
+	expect(smaller?.products.map((product) => product.catalogId)).toEqual(["usd-250"]);
+	expect(fake?.state.commands).toEqual([]);
+});
+
+it("cheaper without a priced reference asks for clarification", async () => {
+	const catalog = createMemoryCatalogAccess(catalogProducts);
+	const { runtime, faux } = await session({ catalog });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { color: "yellow", category: "sectional" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Yellow sectionals."),
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "cheaper" }), { stopReason: "toolUse" }),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toMatch(/invalid_arguments|verified same-currency|Identify which/);
+			return fauxAssistantMessage("Which product should I compare?");
+		},
+	]);
+	expect(await runtime.controller.prompt({ message: "Yellow sectionals" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	expect(await runtime.controller.prompt({ message: "Cheaper" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+});
+
+it("restores catalog snapshots after reopen without rerunning search", async () => {
+	const catalog = createMemoryCatalogAccess(catalogProducts);
+	const { runtime, faux, repo, stored, models } = await session({ catalog });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { color: "yellow", category: "sectional" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Here are yellow sectional sofas to consider."),
+	]);
+	expect(await runtime.controller.prompt({ message: "Yellow sectionals" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const before = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	const calls = faux.state.callCount;
+	await runtime.close();
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		catalog,
+	});
+	cleanup.push(() => recovered.close());
+	await recovered.lane.waitForIdle(context);
+	const after = searchDetails(await recovered.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(after?.searchId).toBe(before?.searchId);
+	expect(after?.products.map((product) => product.catalogId)).toEqual(
+		before?.products.map((product) => product.catalogId),
+	);
+	expect(faux.state.callCount).toBe(calls);
+});
+
+it("keeps catalog follow-up state isolated by conversation", async () => {
+	const catalog = createMemoryCatalogAccess(catalogProducts);
+	const first = await session({ catalog });
+	const second = await session({ catalog });
+	first.faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { color: "yellow", category: "sectional" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Yellow sectionals."),
+	]);
+	second.faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "show_more" }), { stopReason: "toolUse" }),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("invalid_arguments");
+			return fauxAssistantMessage("No prior search in this conversation.");
+		},
+	]);
+	expect(await first.runtime.controller.prompt({ message: "Yellow sectionals" }, context)).toMatchObject({
+		accepted: true,
+	});
+	await first.runtime.lane.waitForIdle(context);
+	expect(await second.runtime.controller.prompt({ message: "Show more" }, context)).toMatchObject({ accepted: true });
+	await second.runtime.lane.waitForIdle(context);
+});
+
+it("mergeCatalogFollowUp keeps filters and applies cheaper or smaller bounds", () => {
+	const prior: CatalogRecommendationDetails = {
+		kind: "catalog_recommendations",
+		searchId: "search-1",
+		products: [usdCheap],
+		resolvedConstraints: { category: ["desk"], color: "oak" },
+		pagination: { limit: 8, offset: 0, exhausted: false },
+		shownIds: ["usd-400"],
+		binding: { designId: "room-a" },
+		followUp: null,
+	};
+	const cheaper = mergeCatalogFollowUp(prior, "cheaper");
+	expect(cheaper.searchId).toBe("search-1");
+	expect(cheaper.request.category).toBe("desk");
+	expect(cheaper.request.color).toBe("oak");
+	expect(cheaper.request.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
+	expect(cheaper.shownIds).toEqual([]);
+	const more = mergeCatalogFollowUp(prior, "show_more");
+	expect(more.request.excludeIds).toEqual(["usd-400"]);
+	expect(more.shownIds).toEqual(["usd-400"]);
+	const smaller = mergeCatalogFollowUp(prior, "smaller", { dimension: "width" });
+	expect(smaller.request.maxWidth).toBe(1.2);
+	expect(smaller.request.exclusiveMaxWidth).toBe(true);
 });
