@@ -39,6 +39,7 @@ function App() {
 	const [status, setStatus] = useState("Connecting");
 	const [attempt, setAttempt] = useState(0);
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
+	const [chatsOpen, setChatsOpen] = useState(false);
 	const [selected, setSelected] = useState<string | null>(() => {
 		try {
 			return localStorage.getItem(selectionKey);
@@ -53,6 +54,7 @@ function App() {
 	const [studioState, setStudioState] = useState<StudioSessionState>();
 	const [studioChoice, setStudioChoice] = useState("");
 	const [studioChanging, setStudioChanging] = useState(false);
+	const [studioOpen, setStudioOpen] = useState(false);
 	const [draft, setDraft] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [attaching, setAttaching] = useState(false);
@@ -282,8 +284,8 @@ function App() {
 	else if (connection && studioState?.phase === "ready") studioPhase = "Ready";
 
 	return (
-		<div className="app">
-			<aside>
+		<div className={chatsOpen ? "app chats-open" : "app"}>
+			<aside id="chats-panel" aria-label="Chats" hidden={!chatsOpen}>
 				<a className="brand" href="/">
 					livi<span>Room decoration assistant</span>
 				</a>
@@ -321,12 +323,29 @@ function App() {
 					{status}
 				</output>
 			</aside>
-			<main>
+			<main className={studioOpen ? "studio-open" : undefined}>
 				<header>
+					<button
+						type="button"
+						className="chats-toggle"
+						aria-expanded={chatsOpen}
+						aria-controls="chats-panel"
+						onClick={() => setChatsOpen((open) => !open)}
+					>
+						{chatsOpen ? "Hide chats" : "Chats"}
+					</button>
 					<span>Make room for something new</span>
-					<span className="muted">Livi</span>
+					<button
+						type="button"
+						className="studio-toggle"
+						aria-expanded={studioOpen}
+						aria-controls="studio-panel"
+						onClick={() => setStudioOpen((open) => !open)}
+					>
+						{studioOpen ? "Hide Studio" : "Studio"}
+					</button>
 				</header>
-				<section className="studio-panel" aria-label="Studio attachment">
+				<section id="studio-panel" className="studio-panel" aria-label="Studio attachment" hidden={!studioOpen}>
 					<div className="studio-heading">
 						<strong>
 							{studioState?.binding
@@ -553,11 +572,11 @@ function formatDimensions(product: CatalogProduct): string | null {
 	const dimensions = product.dimensions;
 	if (!dimensions) return null;
 	const parts = [
-		dimensions.width != null ? `W ${dimensions.width} ${dimensions.unit}` : null,
-		dimensions.depth != null ? `D ${dimensions.depth} ${dimensions.unit}` : null,
-		dimensions.height != null ? `H ${dimensions.height} ${dimensions.unit}` : null,
+		dimensions.width != null ? `W ${Number(dimensions.width.toFixed(2))}` : null,
+		dimensions.depth != null ? `D ${Number(dimensions.depth.toFixed(2))}` : null,
+		dimensions.height != null ? `H ${Number(dimensions.height.toFixed(2))}` : null,
 	].filter((part): part is string => part !== null);
-	return parts.length ? parts.join(" · ") : null;
+	return parts.length ? `${parts.join(" · ")} ${dimensions.unit}` : null;
 }
 
 function CatalogCards({ details }: { details: CatalogRecommendationDetails }) {
@@ -588,23 +607,29 @@ function CatalogCard({ product, recommended }: { product: CatalogProduct; recomm
 			</div>
 			<div className="catalog-card-body">
 				<h3>{product.name}</h3>
-				{product.description || reason ? (
-					<p className="catalog-card-copy">{product.description || reason}</p>
-				) : null}
+				{product.description ? <p className="catalog-card-copy">{product.description}</p> : null}
 				{dimensions ? <p className="catalog-card-meta">{dimensions}</p> : null}
-				{reason && product.description ? <p className="catalog-card-reason">{reason}</p> : null}
-				{price ? (
-					<p className="catalog-card-price">{price}</p>
-				) : (
-					<p className="catalog-card-missing">Price unavailable</p>
-				)}
+				{product.description || reason ? (
+					<details className="catalog-card-details">
+						<summary>Product details</summary>
+						{product.description ? <p>{product.description}</p> : null}
+						{reason ? <p>{reason}</p> : null}
+					</details>
+				) : null}
 				{!dimensions ? <p className="catalog-card-missing">Dimensions unavailable</p> : null}
 				{!showImage ? <p className="catalog-card-missing">Image unavailable</p> : null}
-				{product.productUrl ? (
-					<a className="catalog-card-link" href={product.productUrl} target="_blank" rel="noreferrer">
-						View product
-					</a>
-				) : null}
+				<div className="catalog-card-actions">
+					{price ? (
+						<p className="catalog-card-price">{price}</p>
+					) : (
+						<p className="catalog-card-missing">Price unavailable</p>
+					)}
+					{product.productUrl ? (
+						<a className="catalog-card-link" href={product.productUrl} target="_blank" rel="noreferrer">
+							View product
+						</a>
+					) : null}
+				</div>
 			</div>
 		</li>
 	);

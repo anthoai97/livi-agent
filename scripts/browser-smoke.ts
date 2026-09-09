@@ -82,6 +82,19 @@ page.on("pageerror", (error) => errors.push(error.message));
 page.setDefaultTimeout(15_000);
 try {
 	await page.goto(`http://127.0.0.1:${server.port}`);
+	await page.getByRole("button", { name: "Studio", exact: true }).waitFor();
+	assert.equal(await page.locator("#studio-panel").isVisible(), false);
+	assert.equal(await page.getByRole("button", { name: "Studio", exact: true }).getAttribute("aria-expanded"), "false");
+	assert.equal(await page.locator("#chats-panel").isVisible(), false);
+	assert.equal(await page.getByRole("button", { name: "Chats", exact: true }).getAttribute("aria-expanded"), "false");
+	await page.getByRole("button", { name: "Chats", exact: true }).click();
+	assert.equal(
+		await page.getByRole("button", { name: "Hide chats", exact: true }).getAttribute("aria-expanded"),
+		"true",
+	);
+	await page.getByRole("button", { name: "Hide chats", exact: true }).click();
+	assert.equal(await page.locator("#chats-panel").isVisible(), false);
+	await page.getByRole("button", { name: "Chats", exact: true }).click();
 	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
 	await page.getByRole("textbox", { name: "Message", exact: true }).fill("How can I make room one cozy?");
 	await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -114,18 +127,26 @@ try {
 	assert.equal(server.serverId, identity);
 	await page.getByText("Recovered answer after server restart.", { exact: true }).waitFor();
 	assert.equal(await page.getByText("Recover this browser question.", { exact: true }).count(), 1);
+	await page.getByRole("button", { name: "Chats", exact: true }).click();
 	assert.equal(await page.getByRole("navigation", { name: "Conversations" }).getByRole("button").count(), 2);
 	const fixture = await readRoom("scripts/studio-smoke/fixtures/synthetic-room.json");
 	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
 	await adapter.load(fixture.snapshot);
 	await adapter.connect(server);
 	await adapter.select([]);
+	await page.getByRole("button", { name: "Studio", exact: true }).click();
+	assert.equal(
+		await page.getByRole("button", { name: "Hide Studio", exact: true }).getAttribute("aria-expanded"),
+		"true",
+	);
 	await page
 		.getByLabel("Connected Studios", { exact: true })
 		.selectOption(JSON.stringify(["synthetic-room", "browser-studio"]));
 	await page.getByRole("button", { name: "Attach design", exact: true }).click();
 	await page.getByText("Name an object in your message", { exact: false }).waitFor();
 	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Hide Studio", exact: true }).click();
+	assert.equal(await page.locator("#studio-panel").isVisible(), false);
 	faux.appendResponses([
 		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-red-1", position: [1.5, 1, 0] }), {
 			stopReason: "toolUse",
@@ -140,6 +161,7 @@ try {
 	assert.equal(await page.locator(".message.toolResult").count(), 0, "Raw tool results must not enter chat");
 	assert.equal(await page.locator(".message").filter({ hasText: '"commandId"' }).count(), 0);
 	await page.reload();
+	await page.getByRole("button", { name: "Studio", exact: true }).click();
 	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
 	assert.equal(adapter.emitted.length, 1, "Hydration must not resubmit a command");
 
@@ -197,6 +219,7 @@ try {
 		}),
 		fauxAssistantMessage("Here are yellow sectional sofas to consider for your room."),
 	]);
+	await page.getByRole("button", { name: "Chats", exact: true }).click();
 	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
 	await page
 		.getByRole("textbox", { name: "Message", exact: true })
@@ -236,7 +259,7 @@ try {
 	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-mobile.png" });
 	assert.deepEqual(errors, []);
 	console.log(
-		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, and catalog cards from saved details. Synthetic JSON saves only.",
+		"Browser verification passed: chat sidebar toggle, two chats, streaming, Stop, restart recovery, Studio panel toggle and attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, and catalog cards from saved details. Synthetic JSON saves only.",
 	);
 } finally {
 	await browser.close();
