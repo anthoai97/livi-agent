@@ -64,7 +64,7 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 		name: "Zeroed sofa",
 		imageUrl: null,
 		productUrl: "https://shop.example/sofa",
-		imageSource: "s3://bucket/sofa.png",
+		imageRef: "s3://bucket/sofa.png",
 		dimensions: null,
 		price: null,
 		category: "sofa",
@@ -116,8 +116,74 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 		available_colors: null,
 	});
 	assert.equal(httpsImage?.imageUrl, "https://cdn.example/sofa.jpg");
+	assert.equal(httpsImage?.imageRef, "https://cdn.example/sofa.jpg");
 	assert.equal(httpsImage?.price, null);
 	assert.deepEqual(httpsImage?.dimensions, { width: 2.1, depth: 1.1, height: 0.8, unit: "m" });
+});
+
+test("mapRegistryRow drops temporary signed URLs and keeps stable s3 refs", () => {
+	const signed = mapRegistryRow({
+		asset_id: "33333333-3333-4333-8333-333333333333",
+		name: "Signed",
+		category: "sofa",
+		description: null,
+		asset_description: null,
+		color: null,
+		style: null,
+		shape: null,
+		materials: null,
+		price: null,
+		width: null,
+		depth: null,
+		height: null,
+		image_url:
+			"https://cdn.example/object/sign/sofa.jpg?token=secret&expires=1&X-Amz-Signature=sig&X-Amz-Algorithm=AWS4",
+		product_url: "https://shop.example/object/sign/buy?se=1&sig=abc",
+		available_colors: null,
+	});
+	assert.equal(signed?.imageUrl, null);
+	assert.equal(signed?.imageRef, null);
+	assert.equal(signed?.productUrl, null);
+	const querySigned = mapRegistryRow({
+		asset_id: "44444444-4444-4444-8444-444444444444",
+		name: "Query signed",
+		category: "sofa",
+		description: null,
+		asset_description: null,
+		color: null,
+		style: null,
+		shape: null,
+		materials: null,
+		price: null,
+		width: null,
+		depth: null,
+		height: null,
+		image_url: "https://cdn.example/sofa.jpg?Expires=1&Signature=secret&token=abc",
+		product_url: null,
+		available_colors: null,
+	});
+	assert.equal(querySigned?.imageUrl, null);
+	assert.equal(querySigned?.imageRef, null);
+	const s3 = mapRegistryRow({
+		asset_id: "55555555-5555-4555-8555-555555555555",
+		name: "S3",
+		category: "sofa",
+		description: null,
+		asset_description: null,
+		color: null,
+		style: null,
+		shape: null,
+		materials: null,
+		price: null,
+		width: null,
+		depth: null,
+		height: null,
+		image_url: "s3://bucket/sofa.png",
+		product_url: null,
+		available_colors: null,
+	});
+	assert.equal(s3?.imageUrl, null);
+	assert.equal(s3?.imageRef, "s3://bucket/sofa.png");
 });
 
 test("search SQL parameterizes filters and excludes decor and deleted rows", () => {
@@ -191,7 +257,7 @@ test(
 	async (t) => {
 		const cluster = await startDisposablePostgres();
 		if (!cluster) {
-			t.skip("No disposable Postgres (CATALOG_TEST_DATABASE_URL, docker, or initdb)");
+			t.skip("No disposable Postgres (initdb temp cluster failed)");
 			return;
 		}
 		t.after(() => cluster.stop());
@@ -229,7 +295,7 @@ test(
 		const detail = await access.getProduct("11111111-1111-4111-8111-111111111111");
 		assert.equal(detail.name, "Haven Yellow Sectional Sofa");
 		assert.equal(detail.imageUrl, null);
-		assert.equal(detail.imageSource, "s3://bucket/haven.png");
+		assert.equal(detail.imageRef, "s3://bucket/haven.png");
 		assert.equal(detail.price, null);
 		await assert.rejects(access.getProduct("99999999-9999-4999-8999-999999999999"), /not_found/);
 		await assert.rejects(
@@ -250,6 +316,8 @@ interface DisposablePostgres {
 }
 
 async function startDisposablePostgres(): Promise<DisposablePostgres | undefined> {
+	const fromInitdb = await startInitdbCluster();
+	if (fromInitdb) return fromInitdb;
 	if (process.env.CATALOG_TEST_DATABASE_URL) {
 		return {
 			adminUrl: process.env.CATALOG_TEST_DATABASE_URL,
@@ -257,8 +325,6 @@ async function startDisposablePostgres(): Promise<DisposablePostgres | undefined
 			stop: async () => {},
 		};
 	}
-	const fromInitdb = await startInitdbCluster();
-	if (fromInitdb) return fromInitdb;
 	return undefined;
 }
 

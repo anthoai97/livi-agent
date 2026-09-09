@@ -1,7 +1,13 @@
 import type { Context } from "@earendil-works/chord";
 import type { AgentHarnessTool, AgentHarnessToolInvocation } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import { type CatalogAccess, CatalogError, type CatalogSearchRequest, unavailableCatalogAccess } from "./catalog.ts";
+import {
+	type CatalogAccess,
+	CatalogError,
+	type CatalogSearchRequest,
+	sanitizeCatalogProduct,
+	unavailableCatalogAccess,
+} from "./catalog.ts";
 import {
 	STUDIO_ANGLE_TOLERANCE,
 	STUDIO_TRANSFORM_TOLERANCE,
@@ -371,7 +377,8 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 					excludeIds: args.excludeIds,
 					room: roomHint(toolContext.planning),
 				};
-				return catalog.search(request, signal);
+				const result = await catalog.search(request, signal);
+				return { ...result, products: result.products.map(sanitizeCatalogProduct) };
 			}),
 	};
 	const details: AgentHarnessTool<StudioToolContext, typeof catalogDetailSchema> = {
@@ -383,7 +390,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 			"Read one purchasable catalog product by exact catalog ID. Returns the normalized snapshot or a not-found error. Never changes the room.",
 		execute: (_id, args: Static<typeof catalogDetailSchema>, _update, toolContext, invocation, context) =>
 			runCatalogTool("get_product_details", toolContext, invocation, context, async (catalog, signal) => ({
-				product: await catalog.getProduct(args.catalogId, signal),
+				product: sanitizeCatalogProduct(await catalog.getProduct(args.catalogId, signal)),
 			})),
 	};
 	return [move, rotate, remove, refresh, search, details];

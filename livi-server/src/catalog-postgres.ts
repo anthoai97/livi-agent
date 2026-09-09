@@ -4,12 +4,13 @@ import {
 	CatalogError,
 	type CatalogProduct,
 	type CatalogSearchResult,
+	catalogImageRef,
 	catalogResolvedConstraints,
 	httpUrl,
-	imageSource,
 	metreDimension,
 	type NormalizedCatalogSearch,
 	normalizeCatalogSearchRequest,
+	sanitizeCatalogProduct,
 } from "@livi/decorator-agent";
 import { Pool, type PoolConfig } from "pg";
 
@@ -122,7 +123,6 @@ LIMIT 1`,
 export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | undefined {
 	const catalogId = asText(row.asset_id);
 	if (!catalogId) return undefined;
-	const source = imageSource(row.image_url);
 	const width = metreDimension(asNumber(row.width));
 	const depth = metreDimension(asNumber(row.depth));
 	const height = metreDimension(asNumber(row.height));
@@ -130,12 +130,12 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 		width === null && depth === null && height === null ? null : { width, depth, height, unit: "m" };
 	const availableColors = asTextArray(row.available_colors);
 	const description = asText(row.description) ?? asText(row.asset_description);
-	return {
+	return sanitizeCatalogProduct({
 		catalogId,
 		name: asText(row.name) ?? "",
-		imageUrl: httpUrl(source),
+		imageUrl: httpUrl(row.image_url),
 		productUrl: httpUrl(row.product_url),
-		imageSource: source,
+		imageRef: catalogImageRef(row.image_url),
 		dimensions,
 		price: null,
 		category: asText(row.category),
@@ -146,7 +146,7 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 		availableColors,
 		description,
 		reasons: [],
-	};
+	});
 }
 
 function emptySearch(normalized: NormalizedCatalogSearch): CatalogSearchResult {

@@ -90,7 +90,7 @@ function product(catalogId: string, fields: Partial<CatalogProduct> & { name: st
 		catalogId,
 		imageUrl: null,
 		productUrl: null,
-		imageSource: null,
+		imageRef: null,
 		dimensions: null,
 		price: null,
 		category: null,
@@ -266,9 +266,41 @@ it("search_catalog matches yellow sectionals including L-shaped and excludes dis
 		catalogId: "yellow-sectional-sofa",
 		name: "Haven Yellow Sectional Sofa",
 		imageUrl: "https://cdn.example/haven.jpg",
+		imageRef: "https://cdn.example/haven.jpg",
 		productUrl: "https://shop.example/haven",
 		dimensions: { width: 2.8, depth: 1.6, height: 0.9, unit: "m" },
 		price: null,
+	});
+});
+
+it("omits signed image and product URLs from catalog tool details", async () => {
+	const signed = product("signed-sectional", {
+		name: "Signed Sectional",
+		category: "sectional",
+		color: "yellow",
+		imageUrl: "https://cdn.example/object/sign/sofa.jpg?token=secret-token&X-Amz-Signature=sig",
+		imageRef: "https://cdn.example/object/sign/sofa.jpg?token=secret-token",
+		productUrl: "https://shop.example/buy?se=1&sig=abc",
+	});
+	const s3 = product("s3-sectional", {
+		name: "S3 Sectional",
+		category: "sectional",
+		color: "yellow",
+		imageUrl: "s3://bucket/sofa.png",
+		imageRef: "s3://bucket/sofa.png",
+	});
+	const result = await search(createMemoryCatalogAccess([signed, s3]), { color: "yellow", category: "sectional" });
+	const serialized = JSON.stringify(result.details);
+	expect(serialized).not.toMatch(/secret-token|X-Amz-Signature|sig=abc|[?&]se=/i);
+	const payload = result.details as CatalogSearchResult;
+	expect(payload.products.find((entry) => entry.catalogId === "signed-sectional")).toMatchObject({
+		imageUrl: null,
+		imageRef: null,
+		productUrl: null,
+	});
+	expect(payload.products.find((entry) => entry.catalogId === "s3-sectional")).toMatchObject({
+		imageUrl: null,
+		imageRef: "s3://bucket/sofa.png",
 	});
 });
 

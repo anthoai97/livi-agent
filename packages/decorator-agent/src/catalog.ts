@@ -37,8 +37,8 @@ export interface CatalogProduct {
 	name: string;
 	imageUrl: string | null;
 	productUrl: string | null;
-	/** Original registry image reference for a later resolver. Not a browser card URL when not http(s). */
-	imageSource: string | null;
+	/** Stable non-browser image identity for a later resolver. Not a card URL when not http(s). */
+	imageRef: string | null;
 	dimensions: CatalogDimensions | null;
 	price: CatalogMoney | null;
 	category: string | null;
@@ -149,7 +149,7 @@ export function metreDimension(value: unknown): number | null {
 export function httpUrl(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
-	if (!trimmed) return null;
+	if (!trimmed || isTemporarySignedUrl(trimmed)) return null;
 	try {
 		const parsed = new URL(trimmed);
 		return parsed.protocol === "http:" || parsed.protocol === "https:" ? trimmed : null;
@@ -158,10 +158,42 @@ export function httpUrl(value: unknown): string | null {
 	}
 }
 
-export function imageSource(value: unknown): string | null {
+/** Stable source identity. Keeps s3:// and unsigned http(s); drops expiring signed URLs. */
+export function catalogImageRef(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
-	return trimmed.length > 0 ? trimmed : null;
+	if (!trimmed || isTemporarySignedUrl(trimmed)) return null;
+	try {
+		const parsed = new URL(trimmed);
+		return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "s3:" ? trimmed : null;
+	} catch {
+		return null;
+	}
+}
+
+export function sanitizeCatalogProduct(product: CatalogProduct): CatalogProduct {
+	return {
+		...product,
+		imageUrl: httpUrl(product.imageUrl),
+		imageRef: catalogImageRef(product.imageRef) ?? catalogImageRef(product.imageUrl),
+		productUrl: httpUrl(product.productUrl),
+	};
+}
+
+function isTemporarySignedUrl(value: string): boolean {
+	if (/\/object\/sign\//i.test(value)) return true;
+	try {
+		const parsed = new URL(value);
+		for (const key of parsed.searchParams.keys()) {
+			const name = key.toLowerCase();
+			if (name === "expires" || name === "se" || name === "sig" || name === "signature" || name === "token")
+				return true;
+			if (name.startsWith("x-amz-")) return true;
+		}
+		return false;
+	} catch {
+		return /[?&](expires|se|sig|signature|token|x-amz-[^=]*)=/i.test(value);
+	}
 }
 
 export function unavailableCatalogAccess(): CatalogAccess {
@@ -172,7 +204,7 @@ export function unavailableCatalogAccess(): CatalogAccess {
 }
 
 export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAccess {
-	const records = products.map((product) => ({ ...product, reasons: [] as string[] }));
+	const records = products.map((product) => ({ ...sanitizeCatalogProduct(product), reasons: [] as string[] }));
 	return {
 		async search(request, signal) {
 			signal?.throwIfAborted();
@@ -181,7 +213,9 @@ export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAc
 			matches.sort((left, right) => compareCatalogProducts(left, right, normalized));
 			const page = matches.slice(normalized.offset, normalized.offset + normalized.limit);
 			return {
-				products: page.map((product) => ({ ...product, reasons: catalogReasons(product, normalized) })),
+				products: page.map((product) =>
+					sanitizeCatalogProduct({ ...product, reasons: catalogReasons(product, normalized) }),
+				),
 				resolvedConstraints: catalogResolvedConstraints(normalized),
 				pagination: {
 					limit: normalized.limit,
@@ -195,7 +229,7 @@ export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAc
 			const id = requiredId(catalogId, "catalogId");
 			const product = records.find((entry) => entry.catalogId === id);
 			if (!product) throw new CatalogError("not_found", "No catalog product matches that ID");
-			return { ...product, reasons: [] };
+			return sanitizeCatalogProduct({ ...product, reasons: [] });
 		},
 	};
 }
