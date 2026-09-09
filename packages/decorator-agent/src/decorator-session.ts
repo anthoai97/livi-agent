@@ -15,6 +15,7 @@ import {
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
+import { type CatalogAccess, unavailableCatalogAccess } from "./catalog.ts";
 import { AgentController, type AgentPromptAction } from "./services/agent-controller.ts";
 import { StudioSession } from "./services/studio.ts";
 import { Transcript } from "./services/transcript.ts";
@@ -31,6 +32,7 @@ export interface DecoratorSessionOptions {
 	onError?: (error: Error) => void;
 	onDebug?: (event: string, fields: Record<string, unknown>) => void;
 	studio?: StudioBroker;
+	catalog?: CatalogAccess;
 }
 
 export class DecoratorSession implements RoutedSessionHandle {
@@ -142,6 +144,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 		try {
 			await studio.activate();
 			const tools = createStudioTools();
+			const catalog = options.catalog ?? unavailableCatalogAccess();
 			const created = await AgentHarness.create<StudioToolContext>(
 				{
 					session: options.session,
@@ -150,7 +153,11 @@ export class DecoratorSession implements RoutedSessionHandle {
 					tools,
 					activeToolNames: tools.map((tool) => tool.name),
 					toolExecution: "sequential",
-					toolContext: async (context) => ({ studio, planning: await studio.context(undefined, context) }),
+					toolContext: async (context) => ({
+						studio,
+						planning: await studio.context(undefined, context),
+						catalog,
+					}),
 					resources: {},
 					systemPrompt: studioSystemPrompt,
 					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },

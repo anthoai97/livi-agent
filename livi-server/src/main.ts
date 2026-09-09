@@ -10,6 +10,7 @@ const server = await startLiviServer({
 	studioAllowedOrigins: process.env.STUDIO_ALLOWED_ORIGINS?.split(",")
 		.map((origin) => origin.trim())
 		.filter(Boolean),
+	catalogDatabaseUrl: process.env.CATALOG_DATABASE_URL,
 });
 console.log(`Livi listening on http://${process.env.HOST ?? "127.0.0.1"}:${server.port}`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

@@ -8,7 +8,7 @@ A React + Vite client connects to one Node 24 HTTP server using PI's framed CBOR
 
 The server owns a SQLite repository and one `DecoratorSession` runtime per open conversation. PI's server preserves logical server, session, and attachment routing. Chord handles typed service calls and replicated subscription snapshots and updates.
 
-`DecoratorSession` wraps the local `AgentHarness` and its `main` lane. It owns the Livi prompt, Gemini model selection, durable prompt admission, background generation, aborts, transcript subscriptions, interrupted-operation recovery, and cleanup. Automatic compaction is disabled. Three mutation tools (`move_object`, `rotate_object`, and `remove_object`) and the read-only `get_room_context` tool are exposed. New and reopened lanes receive that allowlist at the next planning boundary. No shell, filesystem, skills, extensions, or MCP capabilities are registered.
+`DecoratorSession` wraps the local `AgentHarness` and its `main` lane. It owns the Livi prompt, Gemini model selection, durable prompt admission, background generation, aborts, transcript subscriptions, interrupted-operation recovery, and cleanup. Automatic compaction is disabled. Three mutation tools (`move_object`, `rotate_object`, and `remove_object`), the read-only `get_room_context` tool, and the read-only catalog tools `search_catalog` and `get_product_details` are exposed. Catalog browsing is injected by the server from `CATALOG_DATABASE_URL` and works without Studio. New and reopened lanes receive that allowlist at the next planning boundary. No shell, filesystem, skills, extensions, or MCP capabilities are registered.
 
 ## Packages
 

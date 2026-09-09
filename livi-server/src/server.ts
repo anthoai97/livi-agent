@@ -8,8 +8,10 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Models } from "@earendil-works/pi-ai";
 import { Server, type ServerHost, SessionNotFoundError } from "@earendil-works/pi-server";
 import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
-import { createServerServices, DecoratorSession, StudioBroker } from "@livi/decorator-agent";
+import { createServerServices, DecoratorSession, StudioBroker, unavailableCatalogAccess } from "@livi/decorator-agent";
+import type { Pool } from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { createCatalogPool, createPostgresCatalogAccess, parseCatalogDatabaseUrl } from "./catalog-postgres.js";
 import { createDebugLogger } from "./debug.js";
 
 export interface LiviServerOptions {
@@ -23,6 +25,7 @@ export interface LiviServerOptions {
 	onError?: (error: Error) => void;
 	studioAllowedOrigins?: string[];
 	debug?: boolean;
+	catalogDatabaseUrl?: string;
 }
 
 function debugOrigin(origin: string | undefined) {
@@ -45,6 +48,9 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 			return origin;
 		}),
 	);
+	const catalogUrl = options.catalogDatabaseUrl?.trim()
+		? parseCatalogDatabaseUrl(options.catalogDatabaseUrl.trim())
+		: undefined;
 	const context = BACKGROUND_CONTEXT;
 	const dataDirectory = resolve(options.dataDirectory ?? fileURLToPath(new URL("../../.data", import.meta.url)));
 	const clientDirectory = resolve(
@@ -65,6 +71,12 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		databaseFactory: createNodeSqliteFactory(),
 	});
 	const reportError = options.onError ?? ((error: Error) => console.error(error));
+	let catalogPool: Pool | undefined;
+	let catalog = unavailableCatalogAccess();
+	if (catalogUrl) {
+		catalogPool = createCatalogPool(catalogUrl);
+		catalog = createPostgresCatalogAccess(catalogPool);
+	}
 	const studio = new StudioBroker();
 	const services = await createServerServices({
 		studio,
@@ -97,6 +109,7 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 					onError: reportError,
 					onDebug,
 					studio,
+					catalog,
 				});
 			} catch (error) {
 				await session.close(context);
@@ -247,6 +260,7 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 				() => protocol.close(),
 				() => services.dispose(),
 				() => repo.close(context),
+				() => (catalogPool ? catalogPool.end() : Promise.resolve()),
 				() => new Promise<void>((done, reject) => sockets.close((error) => (error ? reject(error) : done()))),
 				() =>
 					new Promise<void>((done, reject) =>

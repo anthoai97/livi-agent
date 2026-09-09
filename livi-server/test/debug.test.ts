@@ -30,6 +30,7 @@ test("debug preserves correlation and action fields while redacting sensitive pa
 		payload: "payload-marker",
 		error: "raw-error-marker",
 		exception: new Error("exception-marker"),
+		catalogDatabaseUrl: "postgres://user:credential-marker@host/db",
 	});
 	assert.equal(lines.length, 1);
 	const record = JSON.parse(lines[0] ?? "") as Record<string, unknown>;

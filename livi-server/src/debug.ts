@@ -6,7 +6,7 @@ export function createDebugLogger(enabled: boolean, write: (line: string) => voi
 			write(
 				JSON.stringify({ ...fields, timestamp: new Date().toISOString(), event }, (key, value: unknown) =>
 					value instanceof Error ||
-					/api.?key|authorization|headers|password|secret|token|thinking|signature|snapshot|geometry|payload|^prompt$|^error$/i.test(
+					/api.?key|authorization|headers|password|secret|token|thinking|signature|snapshot|geometry|payload|^prompt$|^error$|connectionString|databaseUrl|catalogDatabase/i.test(
 						key,
 					)
 						? "[redacted]"
