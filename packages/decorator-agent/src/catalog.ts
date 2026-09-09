@@ -196,12 +196,49 @@ export interface NormalizedCatalogSearch {
 	exclusiveMaxHeight: boolean;
 }
 
-const SECTIONAL_CATEGORIES = ["sectional", "sectional_sofa"];
+const CATEGORY_ALIASES: Record<string, string> = {
+	sectional_sofa: "sectional",
+	couch: "sofa",
+	couches: "sofa",
+	armchair: "accent_chair",
+	arm_chair: "accent_chair",
+	chair: "accent_chair",
+	lounge_chair: "accent_chair",
+	area_rug: "rug",
+	carpet: "rug",
+	runner: "rug",
+	end_table: "side_table",
+	writing_desk: "desk",
+	desk_lamp: "table_lamp",
+	bookshelf: "bookcase",
+	bookshelves: "bookcase",
+	book_shelves: "bookcase",
+	shelf: "bookcase",
+	shelves: "bookcase",
+	benches: "bench",
+	footstool: "ottoman",
+	console: "media_unit",
+	media_console: "media_unit",
+	media_storage: "media_unit",
+	entertainment_unit: "media_unit",
+	tv_console: "media_unit",
+	television: "tv",
+	television_stand: "tv_stand",
+	mirror: "wall_mirror",
+	standing_mirror: "floor_mirror",
+	plant: "planter",
+	pub_table: "bar_table",
+	storage: "storage_unit",
+	storage_organizer: "storage_unit",
+	storage_piece: "storage_unit",
+	storage_pieces: "storage_unit",
+};
 
 export function equivalentCategories(category: string): string[] {
-	const key = category.trim().toLowerCase();
-	if (key === "sectional" || key === "sectional_sofa") return [...SECTIONAL_CATEGORIES];
-	return [key];
+	const key = category.trim().toLowerCase().replace(/[ -]+/g, "_");
+	const singular = key.endsWith("s") ? key.slice(0, -1) : key;
+	const canonical = CATEGORY_ALIASES[key] ?? CATEGORY_ALIASES[singular] ?? singular;
+	return [canonical, ...Object.keys(CATEGORY_ALIASES).filter((alias) => CATEGORY_ALIASES[alias] === canonical)];
 }
 
 export function metreDimension(value: unknown): number | null {
@@ -352,7 +389,7 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 export function catalogProductMatches(product: CatalogProduct, request: NormalizedCatalogSearch): boolean {
 	if (request.excludeIds.includes(product.catalogId)) return false;
 	if (request.categories) {
-		const category = product.category?.trim().toLowerCase();
+		const category = product.category ? equivalentCategories(product.category)[0] : undefined;
 		if (!category || !request.categories.includes(category)) return false;
 	}
 	if (request.color && !tokenMatches([product.color, ...(product.availableColors ?? [])], request.color)) return false;
@@ -597,20 +634,29 @@ function uniqueKnownDimension(product: CatalogProduct): CatalogDimensionName | u
 	return known.length === 1 ? known[0] : undefined;
 }
 
-function catalogReasons(product: CatalogProduct, request: NormalizedCatalogSearch): string[] {
+export function catalogReasons(product: CatalogProduct, request: NormalizedCatalogSearch): string[] {
 	const reasons: string[] = [];
-	if (request.color) reasons.push(`Color matches ${request.color}`);
+	if (request.color)
+		reasons.push(
+			tokenMatches([product.color], request.color)
+				? `Actual asset color: ${product.color}`
+				: `Retailer offers ${request.color}; actual asset color: ${product.color ?? "unknown"}. Variant not verified for this asset.`,
+		);
 	if (request.category && product.category) reasons.push(`Category is ${product.category}`);
 	if (request.style && product.style) reasons.push(`Style matches ${request.style}`);
 	if (request.material && product.materials) reasons.push(`Material matches ${request.material}`);
 	return reasons;
 }
 
-function compareCatalogProducts(left: CatalogProduct, right: CatalogProduct, request: NormalizedCatalogSearch): number {
-	const room = rankRoom(right, request) - rankRoom(left, request);
-	if (room) return room;
+export function compareCatalogProducts(
+	left: CatalogProduct,
+	right: CatalogProduct,
+	request: NormalizedCatalogSearch,
+): number {
 	const query = rankQuery(right, request) - rankQuery(left, request);
 	if (query) return query;
+	const room = rankRoom(right, request) - rankRoom(left, request);
+	if (room) return room;
 	const name = left.name.localeCompare(right.name);
 	return name !== 0 ? name : left.catalogId.localeCompare(right.catalogId);
 }

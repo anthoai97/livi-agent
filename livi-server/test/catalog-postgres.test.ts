@@ -307,6 +307,30 @@ test(
 			found.products.some((product) => product.catalogId === "66666666-6666-4666-8666-666666666666"),
 			false,
 		);
+		const ranked = await access.search({
+			category: "sectional",
+			query: "Haven",
+			limit: 1,
+			room: { categories: ["sofa"] },
+		});
+		assert.equal(ranked.products[0]?.name, "Haven Yellow Sectional Sofa");
+		assert.equal(ranked.retrieval?.strategy, "category_text");
+		assert.equal(ranked.pagination.exhausted, false);
+		const desks = await access.search({ category: "desk", query: "velvet" });
+		assert.equal(desks.products.length, 8);
+		assert.equal(desks.products[0]?.name, "Velvet desk");
+		assert.deepEqual(desks.retrieval, {
+			strategy: "category_text",
+			candidateCount: 80,
+			candidateLimit: 80,
+			truncated: true,
+		});
+		const tail = await access.search({ category: "desk", offset: 72 });
+		assert.equal(tail.products.length, 8);
+		assert.equal(tail.pagination.exhausted, false);
+		const last = await access.search({ category: "desk", offset: 80 });
+		assert.equal(last.products.length, 5);
+		assert.equal(last.pagination.exhausted, true);
 		const missing = await access.search({ color: "purple", category: "sectional" });
 		assert.deepEqual(missing.products, []);
 		const detail = await access.getProduct("11111111-1111-4111-8111-111111111111");
@@ -510,6 +534,10 @@ VALUES
 VALUES ($1, 'Yellow plant', 'sectional', 'yellow', 0, NULL, NULL, false)`,
 			["66666666-6666-4666-8666-666666666666"],
 		);
+		await pool.query(`INSERT INTO pipeline.pipeline_assets (asset_id, name, category, materials)
+SELECT ('00000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+CASE WHEN n = 85 THEN 'Velvet desk' ELSE 'A desk ' || n END, 'desk', CASE WHEN n = 85 THEN 'velvet' ELSE 'wood' END
+FROM generate_series(1,85) AS n`);
 		await pool.query("GRANT CONNECT ON DATABASE postgres TO livi_catalog_read");
 		await pool.query("GRANT USAGE ON SCHEMA pipeline TO livi_catalog_read");
 		await pool.query(

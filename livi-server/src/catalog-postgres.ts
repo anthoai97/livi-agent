@@ -5,7 +5,10 @@ import {
 	type CatalogProduct,
 	catalogDeadline,
 	catalogImageRef,
+	catalogProductMatches,
+	catalogReasons,
 	catalogResolvedConstraints,
+	compareCatalogProducts,
 	httpUrl,
 	metreDimension,
 	type NormalizedCatalogSearch,
@@ -106,17 +109,25 @@ export function createPostgresCatalogAccess(pool: Pool): CatalogAccess {
 				const product = mapRegistryRow(row);
 				return product ? [product] : [];
 			});
-			const page = products.slice(0, normalized.limit);
+			const candidates = products.slice(0, 80).filter((product) => catalogProductMatches(product, normalized));
+			candidates.sort((left, right) => compareCatalogProducts(left, right, normalized));
+			const page = candidates.slice(normalized.offset % 80, (normalized.offset % 80) + normalized.limit);
 			return {
 				products: page.map((product) => ({
 					...product,
-					reasons: reasonsFor(product, normalized),
+					reasons: catalogReasons(product, normalized),
 				})),
+				retrieval: {
+					strategy: normalized.categories ? "category_text" : "text",
+					candidateCount: Math.min(products.length, 80),
+					candidateLimit: 80,
+					truncated: products.length > 80,
+				},
 				resolvedConstraints: catalogResolvedConstraints(normalized),
 				pagination: {
 					limit: normalized.limit,
 					offset: normalized.offset,
-					exhausted: products.length <= normalized.limit,
+					exhausted: products.length <= 80 && (normalized.offset % 80) + page.length >= candidates.length,
 				},
 			};
 		},
@@ -182,7 +193,9 @@ export function searchSql(request: NormalizedCatalogSearch): {
 	};
 	if (request.categories) {
 		const param = add(request.categories);
-		where.push(`category IS NOT NULL AND btrim(category) <> '' AND lower(btrim(category)) = ANY(${param}::text[])`);
+		where.push(
+			`category IS NOT NULL AND btrim(category) <> '' AND (regexp_replace(lower(btrim(category)), '[ -]+', '_', 'g') = ANY(${param}::text[]) OR regexp_replace(regexp_replace(lower(btrim(category)), '[ -]+', '_', 'g'), 's$', '') = ANY(${param}::text[]))`,
+		);
 	}
 	if (request.color) {
 		const param = add(request.color.toLowerCase());
@@ -194,13 +207,17 @@ export function searchSql(request: NormalizedCatalogSearch): {
 	pushDimension(where, add, "depth", request.minDepth, request.maxDepth, request.exclusiveMaxDepth);
 	pushDimension(where, add, "height", request.minHeight, request.maxHeight, request.exclusiveMaxHeight);
 	if (request.excludeIds.length) where.push(`NOT (asset_id::text = ANY(${add(request.excludeIds)}::text[]))`);
+	const queryParam = add(request.query ?? request.originalQuery ?? "");
 	const roomParam = add(request.roomCategories);
-	const limitParam = add(request.limit + 1);
-	const offsetParam = add(request.offset);
+	const limitParam = add(81);
+	const offsetParam = add(Math.floor(request.offset / 80) * 80);
 	return {
 		text: `SELECT ${SELECT_COLUMNS} FROM ${REGISTRY}
 WHERE ${where.join(" AND ")}
 ORDER BY
+  (SELECT count(*) FROM unnest(regexp_split_to_array(lower(${queryParam}::text), '[^a-z0-9]+')) AS q(token)
+   WHERE length(q.token) > 2 AND q.token <> ALL(ARRAY['the','with','for','and','can','you','current','replace'])
+   AND position(q.token IN lower(concat_ws(' ', name, category, description, asset_description, color, style, shape, materials))) > 0) DESC,
   CASE WHEN cardinality(${roomParam}::text[]) > 0 AND category IS NOT NULL AND lower(btrim(category)) = ANY(${roomParam}::text[]) THEN 0 ELSE 1 END,
   name ASC NULLS LAST,
   asset_id::text ASC
@@ -281,15 +298,6 @@ async function catalogQuery(
 		signal,
 		8_000,
 	);
-}
-
-function reasonsFor(product: CatalogProduct, request: NormalizedCatalogSearch): string[] {
-	const reasons: string[] = [];
-	if (request.color) reasons.push(`Color matches ${request.color}`);
-	if (request.category && product.category) reasons.push(`Category is ${product.category}`);
-	if (request.style && product.style) reasons.push(`Style matches ${request.style}`);
-	if (request.material && product.materials) reasons.push(`Material matches ${request.material}`);
-	return reasons;
 }
 
 function asText(value: unknown): string | null {

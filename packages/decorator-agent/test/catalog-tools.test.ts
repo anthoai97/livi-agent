@@ -518,7 +518,7 @@ it("follow-ups cheaper, smaller, and show more change only the intended constrai
 	const more = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
 	expect(more?.searchId).toBe(first?.searchId);
 	expect(more?.followUp).toBe("show_more");
-	expect(more?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(more?.resolvedConstraints.category).toEqual(["desk", "writing_desk"]);
 	expect(more?.products.map((product) => product.catalogId)).not.toContain("eur-100");
 	expect(more?.shownIds).toEqual(
 		expect.arrayContaining([...(first?.shownIds ?? []), ...(more?.products.map((p) => p.catalogId) ?? [])]),
@@ -536,7 +536,7 @@ it("follow-ups cheaper, smaller, and show more change only the intended constrai
 	const cheaper = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
 	expect(cheaper?.searchId).toBe(priced?.searchId);
 	expect(cheaper?.followUp).toBe("cheaper");
-	expect(cheaper?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(cheaper?.resolvedConstraints.category).toEqual(["desk", "writing_desk"]);
 	expect(cheaper?.resolvedConstraints.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
 	expect(cheaper?.products.map((product) => product.catalogId)).toEqual(["usd-250"]);
 	expect(await runtime.controller.prompt({ message: "Smaller width than the 400 desk" }, context)).toMatchObject({
@@ -546,7 +546,7 @@ it("follow-ups cheaper, smaller, and show more change only the intended constrai
 	const smaller = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
 	expect(smaller?.searchId).toBe(priced?.searchId);
 	expect(smaller?.followUp).toBe("smaller");
-	expect(smaller?.resolvedConstraints.category).toEqual(["desk"]);
+	expect(smaller?.resolvedConstraints.category).toEqual(["desk", "writing_desk"]);
 	expect(smaller?.resolvedConstraints.maxWidth).toBe(1.2);
 	expect(smaller?.products.map((product) => product.catalogId)).toEqual(["usd-250"]);
 	expect(fake?.state.commands).toEqual([]);
