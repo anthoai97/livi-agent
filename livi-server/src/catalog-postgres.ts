@@ -51,6 +51,7 @@ export function parseCatalogDatabaseUrl(value: string): URL {
 
 export function createCatalogPool(url: URL): Pool {
 	const local = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+	const pooled = url.port === "6543" || url.hostname.includes("pooler.supabase.com");
 	const config: PoolConfig = {
 		connectionString: url.toString(),
 		max: 4,
@@ -60,14 +61,31 @@ export function createCatalogPool(url: URL): Pool {
 		statement_timeout: 8_000,
 		query_timeout: 8_000,
 		application_name: "livi-catalog",
-		ssl: local ? false : { rejectUnauthorized: true },
-		options: "-c default_transaction_read_only=on",
+		ssl: catalogTls(url, local),
+		...(pooled ? {} : { options: "-c default_transaction_read_only=on" }),
 	};
 	const pool = new Pool(config);
 	pool.on("error", () => {
 		// Idle client errors must not crash the process or leak connection details.
 	});
 	return pool;
+}
+
+function catalogTls(url: URL, local: boolean): PoolConfig["ssl"] {
+	if (local) return false;
+	const mode = url.searchParams.get("sslmode");
+	if (mode === "disable") return false;
+	// Hosted poolers often present a chain Node cannot verify with default CAs.
+	// Encrypt the session; require sslmode=verify-full for strict CA checks.
+	if (mode === "verify-full" || mode === "verify-ca") return { rejectUnauthorized: true };
+	if (
+		mode === "require" ||
+		mode === "no-verify" ||
+		url.port === "6543" ||
+		url.hostname.includes("pooler.supabase.com")
+	)
+		return { rejectUnauthorized: false };
+	return { rejectUnauthorized: true };
 }
 
 export function createPostgresCatalogAccess(pool: Pool): CatalogAccess {
@@ -226,8 +244,11 @@ async function catalogQuery(
 	signal: AbortSignal | undefined,
 ): Promise<DesignAssetRegistryRow[]> {
 	if (signal?.aborted) throw new CatalogError("timeout", "Catalog request was cancelled");
+	let client: Awaited<ReturnType<Pool["connect"]>> | undefined;
 	try {
-		const result = await pool.query<DesignAssetRegistryRow>({ text, values });
+		client = await pool.connect();
+		await client.query("SET default_transaction_read_only TO on");
+		const result = await client.query<DesignAssetRegistryRow>({ text, values });
 		if (signal?.aborted) throw new CatalogError("timeout", "Catalog request was cancelled");
 		return result.rows;
 	} catch (error) {
@@ -237,6 +258,8 @@ async function catalogQuery(
 		if (code === "57014") throw new CatalogError("timeout", "Catalog query timed out");
 		if (code === "42501") throw new CatalogError("unauthorized", "Catalog is not authorized for this role");
 		throw new CatalogError("query_failed", "Catalog query failed");
+	} finally {
+		client?.release();
 	}
 }
 

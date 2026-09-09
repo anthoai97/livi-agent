@@ -213,6 +213,16 @@ test("malformed catalog URLs fail closed and local pools do not use TLS", async 
 	const hosted = createCatalogPool(parseCatalogDatabaseUrl("postgres://db.example.internal:5432/postgres"));
 	assert.deepEqual(hosted.options.ssl, { rejectUnauthorized: true });
 	await hosted.end();
+	const pooled = createCatalogPool(
+		parseCatalogDatabaseUrl("postgres://user.project@db.pooler.supabase.com:6543/postgres"),
+	);
+	assert.deepEqual(pooled.options.ssl, { rejectUnauthorized: false });
+	await pooled.end();
+	const verified = createCatalogPool(
+		parseCatalogDatabaseUrl("postgres://db.example.internal:5432/postgres?sslmode=verify-full"),
+	);
+	assert.deepEqual(verified.options.ssl, { rejectUnauthorized: true });
+	await verified.end();
 });
 
 test("absent catalog URL starts the server; malformed URL fails startup", async (t) => {
