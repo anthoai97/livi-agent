@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { normalizeCatalogSearchRequest } from "@livi/decorator-agent";
+import { CatalogError, normalizeCatalogSearchRequest } from "@livi/decorator-agent";
 import { Pool } from "pg";
 import {
 	createCatalogPool,
@@ -234,18 +234,21 @@ test("server.close ends the catalog pool after a configured URL", async (t) => {
 	await server.close();
 });
 
-test("price bounds against the registry source return empty without using unverified prices", async () => {
+test("price bounds against the registry source are unsupported without a verified currency", async () => {
 	const pool = createCatalogPool(parseCatalogDatabaseUrl("postgres://127.0.0.1:1/db"));
 	try {
 		const catalog = createPostgresCatalogAccess(pool);
-		const result = await catalog.search({
-			color: "yellow",
-			category: "sectional",
-			maxPrice: { amountMinor: 50000, currency: "USD" },
-		});
-		assert.deepEqual(result.products, []);
-		assert.equal(result.pagination.exhausted, true);
-		assert.deepEqual(result.resolvedConstraints.maxPrice, { amountMinor: 50000, currency: "USD" });
+		await assert.rejects(
+			catalog.search({
+				color: "yellow",
+				category: "sectional",
+				maxPrice: { amountMinor: 50000, currency: "USD" },
+			}),
+			(error: unknown) =>
+				error instanceof CatalogError &&
+				error.code === "unsupported_filter" &&
+				/verified matching currency/i.test(error.message),
+		);
 	} finally {
 		await pool.end();
 	}
@@ -256,8 +259,12 @@ test(
 	{ timeout: 60_000 },
 	async (t) => {
 		const cluster = await startDisposablePostgres();
-		if (!cluster) {
-			t.skip("No disposable Postgres (initdb temp cluster failed)");
+		if (!cluster || cluster.kind !== "initdb") {
+			t.skip(
+				cluster?.kind === "read-only"
+					? "CATALOG_TEST_DATABASE_URL is read-only; this fixture needs an initdb temp cluster"
+					: "No disposable Postgres (initdb temp cluster failed)",
+			);
 			return;
 		}
 		t.after(() => cluster.stop());
@@ -309,26 +316,21 @@ test(
 	},
 );
 
-interface DisposablePostgres {
-	adminUrl: string;
-	readUrl: string;
-	stop: () => Promise<void>;
-}
+type DisposablePostgres =
+	| { kind: "initdb"; adminUrl: string; readUrl: string; stop: () => Promise<void> }
+	| { kind: "read-only"; readUrl: string; stop: () => Promise<void> };
 
 async function startDisposablePostgres(): Promise<DisposablePostgres | undefined> {
 	const fromInitdb = await startInitdbCluster();
-	if (fromInitdb) return fromInitdb;
-	if (process.env.CATALOG_TEST_DATABASE_URL) {
-		return {
-			adminUrl: process.env.CATALOG_TEST_DATABASE_URL,
-			readUrl: process.env.CATALOG_TEST_DATABASE_URL,
-			stop: async () => {},
-		};
-	}
+	if (fromInitdb) return { kind: "initdb", ...fromInitdb };
+	const existing = process.env.CATALOG_TEST_DATABASE_URL?.trim();
+	if (existing) return { kind: "read-only", readUrl: existing, stop: async () => {} };
 	return undefined;
 }
 
-async function startInitdbCluster(): Promise<DisposablePostgres | undefined> {
+async function startInitdbCluster(): Promise<
+	{ adminUrl: string; readUrl: string; stop: () => Promise<void> } | undefined
+> {
 	try {
 		await execFileAsync("initdb", ["--version"]);
 	} catch {

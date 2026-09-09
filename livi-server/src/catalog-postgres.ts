@@ -3,7 +3,6 @@ import {
 	type CatalogDimensions,
 	CatalogError,
 	type CatalogProduct,
-	type CatalogSearchResult,
 	catalogImageRef,
 	catalogResolvedConstraints,
 	httpUrl,
@@ -77,7 +76,10 @@ export function createPostgresCatalogAccess(pool: Pool): CatalogAccess {
 			signal?.throwIfAborted();
 			const normalized = normalizeCatalogSearchRequest(request);
 			if (normalized.minPrice || normalized.maxPrice) {
-				return emptySearch(normalized);
+				throw new CatalogError(
+					"unsupported_filter",
+					"Price comparisons require a verified matching currency; catalog prices have no currency in this source",
+				);
 			}
 			const { text, values } = searchSql(normalized);
 			const rows = await catalogQuery(pool, text, values, signal);
@@ -147,14 +149,6 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 		description,
 		reasons: [],
 	});
-}
-
-function emptySearch(normalized: NormalizedCatalogSearch): CatalogSearchResult {
-	return {
-		products: [],
-		resolvedConstraints: catalogResolvedConstraints(normalized),
-		pagination: { limit: normalized.limit, offset: normalized.offset, exhausted: true },
-	};
 }
 
 export function searchSql(request: NormalizedCatalogSearch): {
