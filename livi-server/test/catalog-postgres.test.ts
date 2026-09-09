@@ -259,12 +259,8 @@ test(
 	{ timeout: 60_000 },
 	async (t) => {
 		const cluster = await startDisposablePostgres();
-		if (!cluster || cluster.kind !== "initdb") {
-			t.skip(
-				cluster?.kind === "read-only"
-					? "CATALOG_TEST_DATABASE_URL is read-only; this fixture needs an initdb temp cluster"
-					: "No disposable Postgres (initdb temp cluster failed)",
-			);
+		if (!cluster) {
+			t.skip("No disposable Postgres (initdb temp cluster failed)");
 			return;
 		}
 		t.after(() => cluster.stop());
@@ -316,21 +312,17 @@ test(
 	},
 );
 
-type DisposablePostgres =
-	| { kind: "initdb"; adminUrl: string; readUrl: string; stop: () => Promise<void> }
-	| { kind: "read-only"; readUrl: string; stop: () => Promise<void> };
-
-async function startDisposablePostgres(): Promise<DisposablePostgres | undefined> {
-	const fromInitdb = await startInitdbCluster();
-	if (fromInitdb) return { kind: "initdb", ...fromInitdb };
-	const existing = process.env.CATALOG_TEST_DATABASE_URL?.trim();
-	if (existing) return { kind: "read-only", readUrl: existing, stop: async () => {} };
-	return undefined;
+interface DisposablePostgres {
+	adminUrl: string;
+	readUrl: string;
+	stop: () => Promise<void>;
 }
 
-async function startInitdbCluster(): Promise<
-	{ adminUrl: string; readUrl: string; stop: () => Promise<void> } | undefined
-> {
+async function startDisposablePostgres(): Promise<DisposablePostgres | undefined> {
+	return startInitdbCluster();
+}
+
+async function startInitdbCluster(): Promise<DisposablePostgres | undefined> {
 	try {
 		await execFileAsync("initdb", ["--version"]);
 	} catch {
