@@ -11,7 +11,7 @@ Run the requested change to completion with a root orchestrator and an implement
 
 Read applicable AGENTS.md instructions and inspect the working tree, branch, HEAD, and relevant existing PR/stack state. Preserve unrelated existing changes; do not discard them or include them in the task’s commits. Capture the intended behavior, regression scenario, repository paths, and explicit restrictions. Distinguish new authorization from historical instructions: a previous permission to publish a PR, restart a server, or mutate a room does not authorize that action for every future task.
 
-Use the user's configured model and reasoning effort unless they request another. Do not bake project names, pane IDs, commits, PR numbers, or model versions from an example into a new assignment.
+Use the user's configured model and "MEDIUM" effort unless they request another. Do not bake project names, pane IDs, commits, PR numbers, or model versions from an example into a new assignment.
 
 ## Start agents and divide ownership
 
@@ -64,3 +64,5 @@ Have an independent agent inspect a bounded risk or final diff when that adds me
 If the user authorized draft PR publication, use `gh stack` to create a small follow-up atop the intended base, or split a large change into reviewable dependent PRs. Inspect installed command help before use. Give the PR a concrete problem/behavior description and validation evidence. Verify its URL, draft status, base, commit, and local working-tree state. Do not merge, comment, deploy, restart live services, or perform other external actions merely because this workflow includes PR preparation.
 
 The implementation agent returns changed files, behavior, tests/builds, commit/PR information, and limitations. The root verifies that handoff against the agreed acceptance criteria, resolves remaining work, and gives the user a concise final result. Do not stop at a plan or an agent's unsupported claim of completion.
+
+After verifying the final handoffs, close the implementation and review panes created for this task with `herdr pane close <pane-id>` before the root's final response, unless the user asks to keep them open. Track returned pane IDs and verify closure. Keep the root pane and all pre-existing panes open.
