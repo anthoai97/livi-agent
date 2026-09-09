@@ -70,7 +70,7 @@ test("vector retrieval preserves database similarity order and requests only eig
 	assert.deepEqual(first.pagination, { limit: 8, offset: 0, nextOffset: 8, exhausted: false });
 });
 
-test("vector pagination crosses eighty and exclusion continuation preserves an initial offset", async () => {
+test("vector pagination and exclusion continuation preserve an initial offset", async () => {
 	const { pool } = fixture(Array.from({ length: 101 }, (_, i) => row(i)));
 	const access = createPostgresCatalogAccess(pool, { models: { embedQuery: async () => embedding } });
 	const boundary = await access.search({ query: "sofa", offset: 78 });

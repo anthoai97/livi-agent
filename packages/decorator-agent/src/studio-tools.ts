@@ -196,20 +196,18 @@ async function execute(
 					original.command.action.type !== type ||
 					!original.result.after
 				) {
+					let reason = "original_after_missing";
+					if (!original) reason = "original_not_found";
+					else if (original.state !== "committed" || original.result?.status !== "saved")
+						reason = "original_not_saved";
+					else if (original.command.conversationId !== studio.session.metadata.id)
+						reason = "original_conversation_mismatch";
+					else if (original.command.binding.designId !== planning.binding.designId)
+						reason = "original_design_mismatch";
+					else if (original.command.objectId !== objectId) reason = "original_object_mismatch";
+					else if (original.command.action.type !== type) reason = "original_action_mismatch";
 					rejection = {
-						reason: !original
-							? "original_not_found"
-							: original.state !== "committed" || original.result?.status !== "saved"
-								? "original_not_saved"
-								: original.command.conversationId !== studio.session.metadata.id
-									? "original_conversation_mismatch"
-									: original.command.binding.designId !== planning.binding.designId
-										? "original_design_mismatch"
-										: original.command.objectId !== objectId
-											? "original_object_mismatch"
-											: original.command.action.type !== type
-												? "original_action_mismatch"
-												: "original_after_missing",
+						reason,
 						requestedObjectId: objectId,
 						originalCommandId,
 						originalObjectId: original?.command.objectId,

@@ -372,8 +372,8 @@ async function catalogQuery(
 }
 
 function asText(value: unknown): string | null {
-	if (typeof value !== "string") return value == null ? null : String(value).trim() || null;
-	const trimmed = value.trim();
+	if (value == null) return null;
+	const trimmed = String(value).trim();
 	return trimmed.length > 0 ? trimmed : null;
 }
 
