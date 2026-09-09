@@ -8,15 +8,42 @@ export type CatalogErrorCode =
 	| "unsupported_filter"
 	| "timeout"
 	| "unauthorized"
-	| "query_failed";
+	| "query_failed"
+	| "model_failed"
+	| "cancelled";
 
 export class CatalogError extends Error {
 	readonly code: CatalogErrorCode;
-	constructor(code: CatalogErrorCode, message: string) {
+	readonly diagnostic: CatalogDiagnostic | undefined;
+	constructor(code: CatalogErrorCode, message: string, diagnostic?: CatalogDiagnostic) {
 		super(`${code}: ${message}`);
 		this.name = "CatalogError";
 		this.code = code;
+		this.diagnostic = diagnostic;
 	}
+}
+
+/** Safe internal metadata only; never include SQL, URLs, credentials or provider messages. */
+export interface CatalogDiagnostic {
+	stage: "connect" | "retrieve" | "embed" | "validate";
+	backendCode?: string;
+}
+
+export type CatalogSearchPurpose = "replacement" | "recommendation" | "discovery";
+export interface CatalogTarget {
+	designId: string;
+	revision: string;
+	objectId: string;
+	catalogId: string | null;
+	category: string;
+}
+export interface CatalogRetrieval {
+	strategy: "category_text" | "vector_text" | "text";
+	candidateCount: number;
+	candidateLimit: number;
+	/** More retrieval candidates may exist beyond this bounded batch. */
+	truncated: boolean;
+	unindexedCount?: number;
 }
 
 export interface CatalogMoney {
@@ -58,6 +85,9 @@ export interface CatalogPagination {
 }
 
 export interface CatalogResolvedConstraints {
+	originalQuery?: string;
+	purpose?: CatalogSearchPurpose;
+	target?: CatalogTarget;
 	category?: string[];
 	color?: string;
 	style?: string;
@@ -82,6 +112,9 @@ export interface CatalogRoomHint {
 }
 
 export interface CatalogSearchRequest {
+	originalQuery?: string;
+	purpose?: CatalogSearchPurpose;
+	target?: CatalogTarget;
 	query?: string;
 	category?: string;
 	color?: string;
@@ -105,6 +138,7 @@ export interface CatalogSearchRequest {
 }
 
 export interface CatalogSearchResult {
+	retrieval?: CatalogRetrieval;
 	products: CatalogProduct[];
 	resolvedConstraints: CatalogResolvedConstraints;
 	pagination: CatalogPagination;
@@ -119,6 +153,7 @@ export type CatalogFollowUp = "show_more" | "cheaper" | "smaller";
 export type CatalogDimensionName = "width" | "depth" | "height";
 
 export interface CatalogRecommendationDetails {
+	retrieval?: CatalogRetrieval;
 	kind: typeof CATALOG_RECOMMENDATION_KIND;
 	searchId: string;
 	products: CatalogProduct[];
@@ -135,6 +170,9 @@ export interface CatalogAccess {
 }
 
 export interface NormalizedCatalogSearch {
+	originalQuery: string | undefined;
+	purpose: CatalogSearchPurpose;
+	target: CatalogTarget | undefined;
 	query: string | undefined;
 	category: string | undefined;
 	categories: string[] | undefined;
@@ -284,6 +322,9 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 	const excludeIds = (request.excludeIds ?? []).map((id) => requiredId(id, "excludeIds"));
 	const roomCategories = (request.room?.categories ?? []).flatMap((entry) => equivalentCategories(entry));
 	return {
+		originalQuery: request.originalQuery ?? query,
+		purpose: request.purpose ?? "discovery",
+		target: request.target,
 		query,
 		category,
 		categories: category ? equivalentCategories(category) : undefined,
@@ -365,6 +406,9 @@ export function catalogProductMatches(product: CatalogProduct, request: Normaliz
 
 export function catalogResolvedConstraints(request: NormalizedCatalogSearch): CatalogResolvedConstraints {
 	return {
+		...(request.originalQuery ? { originalQuery: request.originalQuery } : {}),
+		purpose: request.purpose,
+		...(request.target ? { target: request.target } : {}),
 		...(request.categories ? { category: request.categories } : {}),
 		...(request.color ? { color: request.color } : {}),
 		...(request.style ? { style: request.style } : {}),
@@ -428,6 +472,10 @@ export function requestFromConstraints(
 	room?: CatalogRoomHint,
 ): CatalogSearchRequest {
 	return {
+		originalQuery: constraints.originalQuery,
+		purpose: constraints.purpose,
+		target: constraints.target,
+		excludeIds: constraints.excludeIds,
 		query: constraints.query,
 		category: constraints.category?.[0],
 		color: constraints.color,
@@ -658,4 +706,32 @@ function requiredId(value: string, field: string): string {
 	const trimmed = value.trim();
 	if (!trimmed) throw new CatalogError("invalid_arguments", `${field} must be a non-empty catalog ID`);
 	return trimmed;
+}
+
+/** Bound waiting even when a dependency fails to honor cancellation. */
+export async function catalogDeadline<T>(
+	run: (signal: AbortSignal) => Promise<T>,
+	signal?: AbortSignal,
+	timeoutMs = 30_000,
+): Promise<T> {
+	const deadline = AbortSignal.timeout(timeoutMs);
+	const active = signal ? AbortSignal.any([signal, deadline]) : deadline;
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<never>((_resolve, reject) => {
+		onAbort = () =>
+			reject(
+				new CatalogError(
+					signal?.aborted ? "cancelled" : "timeout",
+					signal?.aborted ? "Catalog request was cancelled" : "Catalog request timed out",
+				),
+			);
+		active.addEventListener("abort", onAbort, { once: true });
+		if (active.aborted) onAbort();
+	});
+	try {
+		if (active.aborted) return await aborted;
+		return await Promise.race([run(active), aborted]);
+	} finally {
+		if (onAbort) active.removeEventListener("abort", onAbort);
+	}
 }

@@ -2,6 +2,7 @@
 export type {
 	CatalogAccess,
 	CatalogDetailResult,
+	CatalogDiagnostic,
 	CatalogDimensionName,
 	CatalogDimensions,
 	CatalogErrorCode,
@@ -11,9 +12,12 @@ export type {
 	CatalogProduct,
 	CatalogRecommendationDetails,
 	CatalogResolvedConstraints,
+	CatalogRetrieval,
 	CatalogRoomHint,
+	CatalogSearchPurpose,
 	CatalogSearchRequest,
 	CatalogSearchResult,
+	CatalogTarget,
 } from "./catalog.ts";
 export { CATALOG_RECOMMENDATION_KIND, isCatalogRecommendationDetails } from "./catalog.ts";
 export * from "./services/agent-controller.ts";

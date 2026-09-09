@@ -466,7 +466,7 @@ async function runCatalogTool<T>(
 		return { content: [{ type: "text" as const, text: JSON.stringify(payload) }], details: payload };
 	} catch (error) {
 		const wrapped = wrapCatalogError(error, context.abortSignal);
-		studio.debug("tool.error", { ...identity, errorCode: wrapped.code });
+		studio.debug("tool.error", { ...identity, errorCode: wrapped.code, diagnostic: wrapped.diagnostic });
 		throw wrapped;
 	}
 }
@@ -474,7 +474,7 @@ async function runCatalogTool<T>(
 function wrapCatalogError(error: unknown, signal: AbortSignal | undefined): CatalogError {
 	if (error instanceof CatalogError) return error;
 	if (signal?.aborted || (error instanceof Error && error.name === "AbortError"))
-		return new CatalogError("timeout", "Catalog request was cancelled");
+		return new CatalogError("cancelled", "Catalog request was cancelled");
 	return new CatalogError("query_failed", "Catalog query failed");
 }
 

@@ -3,6 +3,7 @@ import {
 	type CatalogDimensions,
 	CatalogError,
 	type CatalogProduct,
+	catalogDeadline,
 	catalogImageRef,
 	catalogResolvedConstraints,
 	httpUrl,
@@ -11,7 +12,7 @@ import {
 	normalizeCatalogSearchRequest,
 	sanitizeCatalogProduct,
 } from "@livi/decorator-agent";
-import { Pool, type PoolConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig } from "pg";
 
 const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
@@ -243,24 +244,43 @@ async function catalogQuery(
 	values: Array<string | number | string[]>,
 	signal: AbortSignal | undefined,
 ): Promise<DesignAssetRegistryRow[]> {
-	if (signal?.aborted) throw new CatalogError("timeout", "Catalog request was cancelled");
-	let client: Awaited<ReturnType<Pool["connect"]>> | undefined;
-	try {
-		client = await pool.connect();
-		await client.query("SET default_transaction_read_only TO on");
-		const result = await client.query<DesignAssetRegistryRow>({ text, values });
-		if (signal?.aborted) throw new CatalogError("timeout", "Catalog request was cancelled");
-		return result.rows;
-	} catch (error) {
-		if (error instanceof CatalogError) throw error;
-		if (signal?.aborted) throw new CatalogError("timeout", "Catalog request was cancelled");
-		const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-		if (code === "57014") throw new CatalogError("timeout", "Catalog query timed out");
-		if (code === "42501") throw new CatalogError("unauthorized", "Catalog is not authorized for this role");
-		throw new CatalogError("query_failed", "Catalog query failed");
-	} finally {
-		client?.release();
-	}
+	return catalogDeadline(
+		async (active) => {
+			let stage: "connect" | "retrieve" = "connect";
+			let client: PoolClient | undefined;
+			let released = false;
+			const release = () => {
+				if (!client || released) return;
+				released = true;
+				client.release(active.aborted);
+			};
+			try {
+				client = await pool.connect();
+				active.addEventListener("abort", release, { once: true });
+				active.throwIfAborted();
+				stage = "retrieve";
+				await client.query("SET default_transaction_read_only TO on");
+				const result = await client.query<DesignAssetRegistryRow>({ text, values });
+				active.throwIfAborted();
+				return result.rows;
+			} catch (error) {
+				if (active.aborted)
+					throw new CatalogError(signal?.aborted ? "cancelled" : "timeout", "Catalog request stopped");
+				if (error instanceof CatalogError) throw error;
+				const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+				const diagnostic = { stage, ...(/^[A-Z0-9_]{2,32}$/.test(code) ? { backendCode: code } : {}) };
+				if (code === "57014") throw new CatalogError("timeout", "Catalog query timed out", diagnostic);
+				if (code === "42501")
+					throw new CatalogError("unauthorized", "Catalog is not authorized for this role", diagnostic);
+				throw new CatalogError("query_failed", "Catalog query failed", diagnostic);
+			} finally {
+				active.removeEventListener("abort", release);
+				release();
+			}
+		},
+		signal,
+		8_000,
+	);
 }
 
 function reasonsFor(product: CatalogProduct, request: NormalizedCatalogSearch): string[] {
