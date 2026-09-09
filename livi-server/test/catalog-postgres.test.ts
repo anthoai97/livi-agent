@@ -8,6 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { CatalogError, normalizeCatalogSearchRequest } from "@livi/decorator-agent";
 import { Pool } from "pg";
+import type { CatalogModels } from "../src/catalog-models.ts";
 import {
 	createCatalogPool,
 	createPostgresCatalogAccess,
@@ -18,6 +19,16 @@ import {
 import { startLiviServer } from "../src/server.ts";
 
 const execFileAsync = promisify(execFile);
+const models: CatalogModels = {
+	embedQuery: async () => [1, ...Array<number>(767).fill(0)],
+	validateCandidates: async (products) =>
+		products.map((product) => ({
+			catalogId: product.catalogId,
+			matches: true,
+			score: 50,
+			evidence: [{ field: "name", quote: product.name }],
+		})),
+};
 
 test("mapRegistryRow treats missing price and dimensions as unknown and keeps non-http image identity", () => {
 	assert.equal(
@@ -281,7 +292,7 @@ test(
 		await setupRegistry(cluster.adminUrl);
 		const readPool = createCatalogPool(parseCatalogDatabaseUrl(cluster.readUrl));
 		t.after(() => readPool.end());
-		const access = createPostgresCatalogAccess(readPool);
+		const access = createPostgresCatalogAccess(readPool, { models });
 		const found = await access.search({ color: "yellow", category: "sectional" });
 		assert.deepEqual(
 			found.products.map((product) => product.catalogId).sort(),
@@ -578,6 +589,7 @@ test(
 		let calls = 0;
 		const access = createPostgresCatalogAccess(readPool, {
 			models: {
+				...models,
 				embedQuery: async () => {
 					calls++;
 					return embedding;
@@ -606,7 +618,7 @@ test("broad search model errors never become an empty successful search", async 
 	try {
 		await assert.rejects(createPostgresCatalogAccess(pool).search({ query: "a cozy room" }), /model_failed/);
 		await assert.rejects(
-			createPostgresCatalogAccess(pool, { models: { embedQuery: async () => [1, 2] } }).search({
+			createPostgresCatalogAccess(pool, { models: { ...models, embedQuery: async () => [1, 2] } }).search({
 				query: "a cozy room",
 			}),
 			/model_failed/,

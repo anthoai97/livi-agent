@@ -644,9 +644,209 @@ it("mergeCatalogFollowUp keeps filters and applies cheaper or smaller bounds", (
 	expect(cheaper.request.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
 	expect(cheaper.shownIds).toEqual([]);
 	const more = mergeCatalogFollowUp(prior, "show_more");
-	expect(more.request.excludeIds).toEqual(["usd-400"]);
+	expect(more.request.omitIds).toEqual(["usd-400"]);
 	expect(more.shownIds).toEqual(["usd-400"]);
 	const smaller = mergeCatalogFollowUp(prior, "smaller", { dimension: "width" });
 	expect(smaller.request.maxWidth).toBe(1.2);
 	expect(smaller.request.exclusiveMaxWidth).toBe(true);
+});
+
+for (const order of ["before", "after", "after_error"] as const) {
+	it(`blocks an erroneous remove ${order} replacement search, but allows a new independent room request`, async () => {
+		const { runtime, faux, fake } = await session({
+			catalog: createMemoryCatalogAccess(catalogProducts),
+			studio: true,
+		});
+		const searchCall = fauxToolCall("search_catalog", {
+			purpose: "replacement",
+			targetObjectId: "sofa-1",
+			category: "sectional",
+			color: "yellow",
+			...(order === "after_error" ? { currency: "USD" } : {}),
+		});
+		const removeCall = fauxToolCall("remove_object", { objectId: "sofa-1" });
+		faux.setResponses([
+			fauxAssistantMessage(order === "before" ? [removeCall, searchCall] : [searchCall, removeCall], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Recommendations only."),
+			fauxAssistantMessage(fauxToolCall("move_object", { objectId: "sofa-1", position: [2, 2, 0] }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Moved."),
+		]);
+		await runtime.controller.prompt(
+			{ message: "Can you replace the current sofa with a yello sectional sofa" },
+			context,
+		);
+		await runtime.lane.waitForIdle(context);
+		expect(fake?.state.commands).toEqual([]);
+		expect(fake?.state.snapshot.objects).toHaveLength(1);
+		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+		expect(JSON.stringify(entries)).toContain("mutation_blocked");
+		await runtime.controller.prompt({ message: "Move the sofa to [2,2,0]" }, context);
+		await runtime.lane.waitForIdle(context);
+		expect(fake?.state.commands).toHaveLength(1);
+		expect(fake?.state.commands[0]?.action.type).toBe("move");
+	});
+}
+
+it("preserves original target, query and exclusions through detachment and show_more", async () => {
+	const { runtime, faux, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });
+	fake!.state.snapshot.selectedObjectIds = [];
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("search_catalog", {
+				category: "sectional",
+				color: "yellow",
+				limit: 1,
+				excludeIds: ["yellow-l-shaped"],
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("One option."),
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "show_more" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("More options."),
+	]);
+	const originalQuery = "Can you replace the current sofa with a yello sectional sofa";
+	await runtime.controller.prompt({ message: originalQuery }, context);
+	await runtime.lane.waitForIdle(context);
+	const first = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context))!;
+	expect(first.resolvedConstraints).toMatchObject({
+		originalQuery,
+		purpose: "replacement",
+		target: { objectId: "sofa-1", revision: "1", designId: "simulated-room" },
+		excludeIds: ["yellow-l-shaped", "current-sofa"],
+	});
+	expect(first.resolvedConstraints.minPrice).toBeUndefined();
+	expect(first.resolvedConstraints.maxPrice).toBeUndefined();
+	await runtime.studio.service.bind(null, context);
+	await runtime.controller.prompt({ message: "Show more" }, context);
+	await runtime.lane.waitForIdle(context);
+	const more = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context))!;
+	expect(more.binding).toEqual(first.binding);
+	expect(more.resolvedConstraints.target).toEqual(first.resolvedConstraints.target);
+	expect(more.resolvedConstraints.originalQuery).toBe(originalQuery);
+	expect(more.products.some((p) => p.catalogId === "yellow-l-shaped")).toBe(false);
+	expect(more.products.some((p) => first.shownIds.includes(p.catalogId))).toBe(false);
+});
+
+it("refinements reset traversal exclusions while keeping intentional exclusions and tighter bounds", () => {
+	const prior: CatalogRecommendationDetails = {
+		kind: "catalog_recommendations",
+		searchId: "s",
+		products: [usdCheap],
+		resolvedConstraints: {
+			category: ["desk"],
+			excludeIds: ["blocked"],
+			maxPrice: { amountMinor: 30000, currency: "USD" },
+			maxWidth: 0.9,
+			exclusiveMaxWidth: true,
+		},
+		pagination: { offset: 0, limit: 8, exhausted: false, excludeIds: ["usd-250", "rejected"] },
+		shownIds: ["usd-250", "usd-400"],
+		binding: null,
+		followUp: "show_more",
+	};
+	const cheaper = mergeCatalogFollowUp(prior, "cheaper").request;
+	expect(cheaper.maxPrice?.amountMinor).toBe(30000);
+	expect(cheaper.excludeIds).toEqual(["blocked"]);
+	expect(cheaper.omitIds).toBeUndefined();
+	const smaller = mergeCatalogFollowUp(prior, "smaller", { dimension: "width" }).request;
+	expect(smaller.maxWidth).toBe(0.9);
+	expect(smaller.exclusiveMaxWidth).toBe(true);
+	expect(smaller.excludeIds).toEqual(["blocked"]);
+	const otherCurrency = { ...prior, resolvedConstraints: { maxPrice: { amountMinor: 20000, currency: "EUR" } } };
+	expect(() => mergeCatalogFollowUp(otherCurrency, "cheaper")).toThrow(/currency/);
+});
+
+it("rejects missing named sofa and an explicit target that conflicts with the named sofa", async () => {
+	for (const missing of [true, false]) {
+		const { runtime, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });
+		const snapshot = structuredClone(fake!.state.snapshot);
+		const chair = { ...snapshot.objects[0]!, id: "chair-1", name: "Chair", category: "accent_chair" };
+		snapshot.objects = missing ? [chair] : [...snapshot.objects, chair];
+		snapshot.selectedObjectIds = ["chair-1"];
+		const tool = createStudioTools().find((t) => t.name === "search_catalog")!;
+		await expect(
+			tool.execute(
+				"call",
+				{ category: "sectional", purpose: "replacement", ...(missing ? {} : { targetObjectId: "chair-1" }) },
+				() => {},
+				{
+					studio: runtime.studio,
+					catalog: createMemoryCatalogAccess(catalogProducts),
+					planning: {
+						operationId: "operation",
+						turnId: "turn",
+						binding: fake!.binding,
+						snapshot,
+						action: null,
+						unavailable: null,
+						originalQuery: "Replace the sofa with a sectional",
+					},
+				},
+				invocation,
+				context,
+			),
+		).rejects.toThrow(/named/);
+	}
+});
+
+it("grounds exact object names and punctuation without blocking an independent position swap", async () => {
+	const { runtime, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });
+	const snapshot = structuredClone(fake!.state.snapshot);
+	const catalog = createMemoryCatalogAccess(catalogProducts);
+	const tool = createStudioTools().find((t) => t.name === "search_catalog")!;
+	for (const [message, name, category] of [
+		["Replace my Reading nook with a sectional", "Reading nook", "accent_chair"],
+		["Replace the sofa.", "Sofa", "sofa"],
+	]) {
+		snapshot.objects[0]!.name = name!;
+		snapshot.objects[0]!.category = category!;
+		const result = await tool.execute(
+			"call",
+			{ category: "sectional", targetObjectId: "sofa-1" },
+			() => {},
+			{
+				studio: runtime.studio,
+				catalog,
+				planning: {
+					operationId: "operation",
+					turnId: "turn",
+					binding: fake!.binding,
+					snapshot,
+					action: null,
+					unavailable: null,
+					originalQuery: message,
+				},
+			},
+			invocation,
+			context,
+		);
+		expect((result.details as CatalogRecommendationDetails).resolvedConstraints.target?.objectId).toBe("sofa-1");
+	}
+	const move = createStudioTools().find((t) => t.name === "move_object")!;
+	const swapInvocation = { ...invocation, operationId: "swap", invocationId: "swap-move" };
+	await move.execute(
+		"call",
+		{ objectId: "sofa-1", position: [2, 2, 0] },
+		() => {},
+		{
+			studio: runtime.studio,
+			catalog,
+			planning: {
+				operationId: "swap",
+				turnId: "turn",
+				binding: fake!.binding,
+				snapshot,
+				action: null,
+				unavailable: null,
+				originalQuery: "Swap the positions of the sofa and chair",
+			},
+		},
+		swapInvocation,
+		context,
+	);
+	expect(fake!.state.commands).toHaveLength(1);
 });

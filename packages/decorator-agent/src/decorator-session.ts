@@ -71,7 +71,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 						return { ok: false as const, error: { _tag: "InvalidMessage" as const, message: parsed.error } };
 					}
 					const operationId = options.session.idGenerator.next(Date.now());
-					await studio.journal.admit(operationId, context, parsed.value);
+					await studio.journal.admit(operationId, context, parsed.value, request.message);
 					try {
 						const admitted = await lane.accept({ kind: "prompt", operationId, prompt: request.message }, context);
 						if (!admitted.ok) await studio.journal.discardAdmission(operationId);

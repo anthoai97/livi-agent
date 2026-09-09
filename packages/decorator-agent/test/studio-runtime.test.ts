@@ -1118,9 +1118,17 @@ it("keeps the pinned selection after a failed open drive so recovery can resume 
 	await expect.poll(() => errors.map((error) => error.message)).toEqual(["Simulated drive failure"]);
 	expect((await runtime.lane.inspectExecution(context)).current?.id).toBe(admitted.operationId);
 	expect(await runtime.lane.getResult(admitted.operationId, context)).toBeUndefined();
-	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({
+		value: fake.binding,
+		action,
+		originalQuery: "Replace this sofa",
+	});
 	await runtime.studio.service.bind({ designId: "different-room", tabId: "different-tab" }, context);
-	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({ value: fake.binding, action });
+	expect(await runtime.studio.journal.admission(admitted.operationId)).toEqual({
+		value: fake.binding,
+		action,
+		originalQuery: "Replace this sofa",
+	});
 	errors.length = 0;
 	await runtime.close();
 	faux.setResponses([

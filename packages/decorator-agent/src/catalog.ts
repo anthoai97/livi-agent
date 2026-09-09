@@ -79,6 +79,10 @@ export interface CatalogProduct {
 }
 
 export interface CatalogPagination {
+	/** Continue within this ranked batch using returned count, never the requested limit. */
+	nextOffset?: number;
+	/** Rejected or offset-skipped candidates to omit on show_more. */
+	excludeIds?: string[];
 	limit: number;
 	offset: number;
 	exhausted: boolean;
@@ -112,6 +116,8 @@ export interface CatalogRoomHint {
 }
 
 export interface CatalogSearchRequest {
+	/** Traversal only; never becomes an intentional user exclusion. */
+	omitIds?: string[];
 	originalQuery?: string;
 	purpose?: CatalogSearchPurpose;
 	target?: CatalogTarget;
@@ -170,6 +176,8 @@ export interface CatalogAccess {
 }
 
 export interface NormalizedCatalogSearch {
+	intentionalExcludeIds: string[];
+	omitIds: string[];
 	originalQuery: string | undefined;
 	purpose: CatalogSearchPurpose;
 	target: CatalogTarget | undefined;
@@ -319,6 +327,8 @@ export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAc
 				pagination: {
 					limit: normalized.limit,
 					offset: normalized.offset,
+					nextOffset: normalized.offset + page.length,
+					excludeIds: normalized.omitIds,
 					exhausted: normalized.offset + page.length >= matches.length,
 				},
 			};
@@ -356,9 +366,13 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 		throw new CatalogError("invalid_arguments", "minPrice cannot exceed maxPrice");
 	const limit = request.limit === undefined ? DEFAULT_CATALOG_LIMIT : optionalLimit(request.limit);
 	const offset = request.offset === undefined ? 0 : optionalOffset(request.offset);
-	const excludeIds = (request.excludeIds ?? []).map((id) => requiredId(id, "excludeIds"));
+	const intentionalExcludeIds = (request.excludeIds ?? []).map((id) => requiredId(id, "excludeIds"));
+	const omitIds = (request.omitIds ?? []).map((id) => requiredId(id, "omitIds"));
+	const excludeIds = [...new Set([...intentionalExcludeIds, ...omitIds])];
 	const roomCategories = (request.room?.categories ?? []).flatMap((entry) => equivalentCategories(entry));
 	return {
+		intentionalExcludeIds,
+		omitIds,
 		originalQuery: request.originalQuery ?? query,
 		purpose: request.purpose ?? "discovery",
 		target: request.target,
@@ -459,7 +473,7 @@ export function catalogResolvedConstraints(request: NormalizedCatalogSearch): Ca
 		...(request.minPrice ? { minPrice: request.minPrice } : {}),
 		...(request.maxPrice ? { maxPrice: request.maxPrice } : {}),
 		...(request.query ? { query: request.query } : {}),
-		...(request.excludeIds.length ? { excludeIds: request.excludeIds } : {}),
+		...(request.intentionalExcludeIds.length ? { excludeIds: request.intentionalExcludeIds } : {}),
 		...(request.exclusiveMaxWidth ? { exclusiveMaxWidth: true } : {}),
 		...(request.exclusiveMaxDepth ? { exclusiveMaxDepth: true } : {}),
 		...(request.exclusiveMaxHeight ? { exclusiveMaxHeight: true } : {}),
@@ -548,7 +562,7 @@ export function mergeCatalogFollowUp(
 		return {
 			request: {
 				...base,
-				excludeIds: prior.shownIds,
+				omitIds: [...new Set([...prior.shownIds, ...(prior.pagination.excludeIds ?? [])])],
 				offset: 0,
 				limit: prior.pagination.limit,
 			},
@@ -563,13 +577,25 @@ export function mergeCatalogFollowUp(
 				"invalid_arguments",
 				"Cheaper needs an identified product with a verified same-currency price",
 			);
+		if (
+			[base.minPrice, base.maxPrice].some(
+				(bound) => bound && bound.currency.toUpperCase() !== reference.price!.currency.toUpperCase(),
+			)
+		)
+			throw new CatalogError("unsupported_filter", "Cheaper must preserve the original verified currency");
 		if (reference.price.amountMinor < 1)
 			throw new CatalogError("invalid_arguments", "Nothing is cheaper than the identified product's verified price");
 		return {
 			request: {
 				...base,
-				maxPrice: { amountMinor: reference.price.amountMinor - 1, currency: reference.price.currency },
-				excludeIds: undefined,
+				maxPrice: {
+					amountMinor: Math.min(
+						reference.price.amountMinor - 1,
+						base.maxPrice?.amountMinor ?? Number.POSITIVE_INFINITY,
+					),
+					currency: reference.price.currency,
+				},
+				excludeIds: base.excludeIds,
 				offset: 0,
 				limit: prior.pagination.limit,
 			},
@@ -590,11 +616,20 @@ export function mergeCatalogFollowUp(
 		request: {
 			...base,
 			...(dimension === "width"
-				? { maxWidth: size, exclusiveMaxWidth: true }
+				? {
+						maxWidth: Math.min(size, base.maxWidth ?? size),
+						exclusiveMaxWidth: size <= (base.maxWidth ?? size) || base.exclusiveMaxWidth,
+					}
 				: dimension === "depth"
-					? { maxDepth: size, exclusiveMaxDepth: true }
-					: { maxHeight: size, exclusiveMaxHeight: true }),
-			excludeIds: undefined,
+					? {
+							maxDepth: Math.min(size, base.maxDepth ?? size),
+							exclusiveMaxDepth: size <= (base.maxDepth ?? size) || base.exclusiveMaxDepth,
+						}
+					: {
+							maxHeight: Math.min(size, base.maxHeight ?? size),
+							exclusiveMaxHeight: size <= (base.maxHeight ?? size) || base.exclusiveMaxHeight,
+						}),
+			excludeIds: base.excludeIds,
 			offset: 0,
 			limit: prior.pagination.limit,
 		},
@@ -641,6 +676,10 @@ export function catalogReasons(product: CatalogProduct, request: NormalizedCatal
 			tokenMatches([product.color], request.color)
 				? `Actual asset color: ${product.color}`
 				: `Retailer offers ${request.color}; actual asset color: ${product.color ?? "unknown"}. Variant not verified for this asset.`,
+		);
+	if (!request.color && (product.color || product.availableColors?.length))
+		reasons.push(
+			`Actual asset color: ${product.color ?? "unknown"}${product.availableColors?.length ? `; retailer options: ${product.availableColors.join(", ")} (variants unverified)` : ""}`,
 		);
 	if (request.category && product.category) reasons.push(`Category is ${product.category}`);
 	if (request.style && product.style) reasons.push(`Style matches ${request.style}`);

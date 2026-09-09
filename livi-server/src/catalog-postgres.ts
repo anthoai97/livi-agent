@@ -17,7 +17,7 @@ import {
 } from "@livi/decorator-agent";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
-import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels } from "./catalog-models.js";
+import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels, validateCatalogAssessments } from "./catalog-models.js";
 
 const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
@@ -147,8 +147,34 @@ export function createPostgresCatalogAccess(pool: Pool, options: { models?: Cata
 				return product ? [product] : [];
 			});
 			const candidates = products.filter((product) => catalogProductMatches(product, normalized));
-			candidates.sort((left, right) => compareCatalogProducts(left, right, normalized));
-			const page = candidates.slice(normalized.offset, normalized.offset + normalized.limit);
+			let ranked = candidates;
+			if (candidates.length) {
+				if (!options.models)
+					throw new CatalogError("model_failed", "Catalog validation model is not configured", {
+						stage: "validate",
+					});
+				let verdicts: ReturnType<typeof validateCatalogAssessments>;
+				try {
+					verdicts = validateCatalogAssessments(
+						await catalogDeadline(
+							(active) => options.models!.validateCandidates(candidates, normalized, active),
+							signal,
+						),
+						candidates,
+					);
+				} catch (error) {
+					if (error instanceof CatalogError) throw error;
+					throw new CatalogError("model_failed", "Catalog attribute validation failed", { stage: "validate" });
+				}
+				const byId = new Map(verdicts.map((verdict) => [verdict.catalogId, verdict]));
+				ranked = candidates.filter((product) => byId.get(product.catalogId)?.matches);
+				ranked.sort(
+					(left, right) =>
+						byId.get(right.catalogId)!.score - byId.get(left.catalogId)!.score ||
+						compareCatalogProducts(left, right, normalized),
+				);
+			} else ranked.sort((left, right) => compareCatalogProducts(left, right, normalized));
+			const page = ranked.slice(normalized.offset, normalized.offset + normalized.limit);
 			return {
 				products: page.map((product) => ({
 					...product,
@@ -165,7 +191,18 @@ export function createPostgresCatalogAccess(pool: Pool, options: { models?: Cata
 				pagination: {
 					limit: normalized.limit,
 					offset: normalized.offset,
-					exhausted: !truncated && normalized.offset + page.length >= candidates.length,
+					exhausted: !truncated && normalized.offset + page.length >= ranked.length,
+					nextOffset: normalized.offset + page.length,
+					excludeIds: [
+						...normalized.omitIds,
+						...products
+							.filter(
+								(product) =>
+									!ranked.some((entry) => entry.catalogId === product.catalogId) ||
+									ranked.slice(0, normalized.offset).some((entry) => entry.catalogId === product.catalogId),
+							)
+							.map((product) => product.catalogId),
+					],
 				},
 			};
 		},

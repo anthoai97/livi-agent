@@ -1,6 +1,6 @@
 # Plan: catalog search #26
 
-[Issue](https://github.com/anthoai97/livi-agent/issues/26). Scope reviewed; implementation not started.
+[Issue](https://github.com/anthoai97/livi-agent/issues/26). Implementation and validation notes: [Catalog-Search.md](Catalog-Search.md).
 
 1. Verify `.env` read access, embedding model/dimensions/provenance/coverage. Reproduce yellow-sectional failure.
 2. Extend existing catalog functions/contracts: original query, search purpose, room target/revision, persisted constraints. No invented budget/currency.
