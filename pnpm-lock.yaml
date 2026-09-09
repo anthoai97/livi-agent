@@ -84,6 +84,9 @@ importers:
       '@earendil-works/pi-session-backend-sqlite-node':
         specifier: workspace:*
         version: link:../packages/session-backends/sqlite-node
+      '@google/genai':
+        specifier: 1.52.0
+        version: 1.52.0
       '@livi/decorator-agent':
         specifier: workspace:*
         version: link:../packages/decorator-agent
@@ -2876,7 +2879,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.9(@types/node@22.19.19)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@22.19.19)(tsx@4.22.1)(yaml@2.9.0))
+      vitest: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
 
   '@vitest/expect@4.1.9':
     dependencies:

@@ -17,6 +17,7 @@ import {
 } from "@livi/decorator-agent";
 import type { Pool } from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { createCatalogModels } from "./catalog-models.js";
 import { createCatalogPool, createPostgresCatalogAccess, parseCatalogDatabaseUrl } from "./catalog-postgres.js";
 import { createDebugLogger } from "./debug.js";
 
@@ -82,7 +83,9 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 	let catalog = options.catalog ?? unavailableCatalogAccess();
 	if (!options.catalog && catalogUrl) {
 		catalogPool = createCatalogPool(catalogUrl);
-		catalog = createPostgresCatalogAccess(catalogPool);
+		catalog = createPostgresCatalogAccess(catalogPool, {
+			models: createCatalogModels({ apiKey: options.apiKey, modelId: options.modelId }),
+		});
 	}
 	const studio = new StudioBroker();
 	const services = await createServerServices({

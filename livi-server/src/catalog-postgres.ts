@@ -17,6 +17,8 @@ import {
 } from "@livi/decorator-agent";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
+import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels } from "./catalog-models.js";
+
 const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
 	"asset_id, name, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
@@ -92,7 +94,7 @@ function catalogTls(url: URL, local: boolean): PoolConfig["ssl"] {
 	return { rejectUnauthorized: true };
 }
 
-export function createPostgresCatalogAccess(pool: Pool): CatalogAccess {
+export function createPostgresCatalogAccess(pool: Pool, options: { models?: CatalogModels } = {}): CatalogAccess {
 	return {
 		async search(request, signal) {
 			signal?.throwIfAborted();
@@ -103,31 +105,67 @@ export function createPostgresCatalogAccess(pool: Pool): CatalogAccess {
 					"Price comparisons require a verified matching currency; catalog prices have no currency in this source",
 				);
 			}
-			const { text, values } = searchSql(normalized);
-			const rows = await catalogQuery(pool, text, values, signal);
+			const broad =
+				Boolean(normalized.query ?? normalized.originalQuery) &&
+				(!normalized.categories ||
+					(normalized.purpose === "discovery" && !normalized.target && !normalized.roomCategories.length));
+			if (normalized.offset >= (broad ? 160 : 80))
+				throw new CatalogError(
+					"invalid_arguments",
+					"Offset is outside this bounded candidate batch; use show_more to continue",
+				);
+			let rows: DesignAssetRegistryRow[];
+			let unindexedCount: number | undefined;
+			let truncated: boolean;
+			if (broad) {
+				if (!options.models)
+					throw new CatalogError("model_failed", "Catalog embedding model is not configured", { stage: "embed" });
+				const embedding = await options.models.embedQuery(normalized.query ?? normalized.originalQuery!, signal);
+				if (
+					embedding.length !== CATALOG_EMBEDDING_DIMENSIONS ||
+					!embedding.every(Number.isFinite) ||
+					!embedding.some((value) => value !== 0)
+				)
+					throw new CatalogError("model_failed", "Catalog embedding response is invalid", { stage: "embed" });
+				const vector = searchSql(normalized, { embedding });
+				const text = searchSql(normalized, { unindexed: true });
+				const [indexed, unindexed] = await Promise.all([
+					catalogQuery(pool, vector.text, vector.values, signal),
+					catalogQuery(pool, text.text, text.values, signal),
+				]);
+				unindexedCount = Math.min(unindexed.length, 80);
+				truncated = indexed.length > 80 || unindexed.length > 80;
+				rows = [...indexed.slice(0, 80), ...unindexed.slice(0, 80)];
+			} else {
+				const { text, values } = searchSql(normalized);
+				rows = await catalogQuery(pool, text, values, signal);
+				truncated = rows.length > 80;
+				rows = rows.slice(0, 80);
+			}
 			const products = rows.flatMap((row) => {
 				const product = mapRegistryRow(row);
 				return product ? [product] : [];
 			});
-			const candidates = products.slice(0, 80).filter((product) => catalogProductMatches(product, normalized));
+			const candidates = products.filter((product) => catalogProductMatches(product, normalized));
 			candidates.sort((left, right) => compareCatalogProducts(left, right, normalized));
-			const page = candidates.slice(normalized.offset % 80, (normalized.offset % 80) + normalized.limit);
+			const page = candidates.slice(normalized.offset, normalized.offset + normalized.limit);
 			return {
 				products: page.map((product) => ({
 					...product,
 					reasons: catalogReasons(product, normalized),
 				})),
 				retrieval: {
-					strategy: normalized.categories ? "category_text" : "text",
-					candidateCount: Math.min(products.length, 80),
-					candidateLimit: 80,
-					truncated: products.length > 80,
+					strategy: broad ? "vector_text" : normalized.categories ? "category_text" : "text",
+					candidateCount: products.length,
+					candidateLimit: broad ? 160 : 80,
+					truncated,
+					...(unindexedCount === undefined ? {} : { unindexedCount }),
 				},
 				resolvedConstraints: catalogResolvedConstraints(normalized),
 				pagination: {
 					limit: normalized.limit,
 					offset: normalized.offset,
-					exhausted: products.length <= 80 && (normalized.offset % 80) + page.length >= candidates.length,
+					exhausted: !truncated && normalized.offset + page.length >= candidates.length,
 				},
 			};
 		},
@@ -181,7 +219,10 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 	});
 }
 
-export function searchSql(request: NormalizedCatalogSearch): {
+export function searchSql(
+	request: NormalizedCatalogSearch,
+	options: { embedding?: number[]; unindexed?: boolean } = {},
+): {
 	text: string;
 	values: Array<string | number | string[]>;
 } {
@@ -208,20 +249,27 @@ export function searchSql(request: NormalizedCatalogSearch): {
 	pushDimension(where, add, "height", request.minHeight, request.maxHeight, request.exclusiveMaxHeight);
 	if (request.excludeIds.length) where.push(`NOT (asset_id::text = ANY(${add(request.excludeIds)}::text[]))`);
 	const queryParam = add(request.query ?? request.originalQuery ?? "");
+	if (options.unindexed)
+		where.push(
+			`NOT EXISTS (SELECT 1 FROM pipeline.asset_embeddings e WHERE e.asset_id = r.asset_id AND e.embedding IS NOT NULL)`,
+		);
+	const vectorParam = options.embedding ? add(JSON.stringify(options.embedding)) : undefined;
+
 	const roomParam = add(request.roomCategories);
 	const limitParam = add(81);
-	const offsetParam = add(Math.floor(request.offset / 80) * 80);
+
 	return {
-		text: `SELECT ${SELECT_COLUMNS} FROM ${REGISTRY}
+		text: `SELECT ${SELECT_COLUMNS} FROM ${REGISTRY} r ${vectorParam ? "JOIN (SELECT asset_id, embedding FROM pipeline.asset_embeddings WHERE embedding IS NOT NULL) e USING(asset_id)" : ""}
 WHERE ${where.join(" AND ")}
 ORDER BY
+  ${vectorParam ? `e.embedding <=> ${vectorParam}::vector ASC,` : ""}
   (SELECT count(*) FROM unnest(regexp_split_to_array(lower(${queryParam}::text), '[^a-z0-9]+')) AS q(token)
    WHERE length(q.token) > 2 AND q.token <> ALL(ARRAY['the','with','for','and','can','you','current','replace'])
    AND position(q.token IN lower(concat_ws(' ', name, category, description, asset_description, color, style, shape, materials))) > 0) DESC,
   CASE WHEN cardinality(${roomParam}::text[]) > 0 AND category IS NOT NULL AND lower(btrim(category)) = ANY(${roomParam}::text[]) THEN 0 ELSE 1 END,
   name ASC NULLS LAST,
   asset_id::text ASC
-LIMIT ${limitParam} OFFSET ${offsetParam}`,
+LIMIT ${limitParam}`,
 		values,
 	};
 }

@@ -15,6 +15,7 @@
     "@earendil-works/pi-ai": "workspace:*",
     "@earendil-works/pi-server": "workspace:*",
     "@earendil-works/pi-session-backend-sqlite-node": "workspace:*",
+    "@google/genai": "1.52.0",
     "@livi/decorator-agent": "workspace:*",
     "pg": "8.23.0",
     "ws": "8.18.3"

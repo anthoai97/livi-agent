@@ -316,7 +316,7 @@ test(
 		assert.equal(ranked.products[0]?.name, "Haven Yellow Sectional Sofa");
 		assert.equal(ranked.retrieval?.strategy, "category_text");
 		assert.equal(ranked.pagination.exhausted, false);
-		const desks = await access.search({ category: "desk", query: "velvet" });
+		const desks = await access.search({ category: "desk", query: "velvet", purpose: "recommendation" });
 		assert.equal(desks.products.length, 8);
 		assert.equal(desks.products[0]?.name, "Velvet desk");
 		assert.deepEqual(desks.retrieval, {
@@ -328,9 +328,7 @@ test(
 		const tail = await access.search({ category: "desk", offset: 72 });
 		assert.equal(tail.products.length, 8);
 		assert.equal(tail.pagination.exhausted, false);
-		const last = await access.search({ category: "desk", offset: 80 });
-		assert.equal(last.products.length, 5);
-		assert.equal(last.pagination.exhausted, true);
+		await assert.rejects(access.search({ category: "desk", offset: 80 }), /bounded candidate batch/);
 		const missing = await access.search({ color: "purple", category: "sectional" });
 		assert.deepEqual(missing.products, []);
 		const detail = await access.getProduct("11111111-1111-4111-8111-111111111111");
@@ -550,3 +548,70 @@ FROM generate_series(1,85) AS n`);
 		await pool.end();
 	}
 }
+
+test(
+	"pgvector hydrates registry facts and supplements products missing from the index",
+	{ timeout: 60_000 },
+	async (t) => {
+		const cluster = await startDisposablePostgres();
+		if (!cluster) return t.skip("No disposable PostgreSQL available");
+		t.after(() => cluster.stop());
+		await setupRegistry(cluster.adminUrl);
+		const admin = new Pool({ connectionString: cluster.adminUrl });
+		t.after(() => admin.end());
+		try {
+			await admin.query("CREATE EXTENSION vector");
+		} catch {
+			return t.skip(
+				"pgvector extension is not installed in disposable PostgreSQL; live read-only vector smoke required",
+			);
+		}
+		await admin.query("CREATE TABLE pipeline.asset_embeddings (asset_id uuid PRIMARY KEY, embedding vector(768))");
+		const embedding = [1, ...Array<number>(767).fill(0)];
+		await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, $2::vector)", [
+			"11111111-1111-4111-8111-111111111111",
+			JSON.stringify(embedding),
+		]);
+		await admin.query("GRANT SELECT ON pipeline.asset_embeddings TO livi_catalog_read");
+		const readPool = createCatalogPool(parseCatalogDatabaseUrl(cluster.readUrl));
+		t.after(() => readPool.end());
+		let calls = 0;
+		const access = createPostgresCatalogAccess(readPool, {
+			models: {
+				embedQuery: async () => {
+					calls++;
+					return embedding;
+				},
+			},
+		});
+		const scoped = await access.search({
+			category: "sectional",
+			color: "yellow",
+			query: "yellow",
+			room: { categories: ["sofa"] },
+		});
+		assert.equal(calls, 0);
+		assert.equal(scoped.retrieval?.strategy, "category_text");
+		const broad = await access.search({ query: "yellow sectional", color: "yellow" });
+		assert.equal(calls, 1);
+		assert.equal(broad.retrieval?.strategy, "vector_text");
+		assert.ok(broad.retrieval?.unindexedCount);
+		assert.ok(broad.products.some((p) => p.shape === "L-shaped"));
+		assert.ok(broad.products.some((p) => p.catalogId === "11111111-1111-4111-8111-111111111111"));
+	},
+);
+
+test("broad search model errors never become an empty successful search", async () => {
+	const pool = createCatalogPool(parseCatalogDatabaseUrl("postgres://127.0.0.1:1/db"));
+	try {
+		await assert.rejects(createPostgresCatalogAccess(pool).search({ query: "a cozy room" }), /model_failed/);
+		await assert.rejects(
+			createPostgresCatalogAccess(pool, { models: { embedQuery: async () => [1, 2] } }).search({
+				query: "a cozy room",
+			}),
+			/model_failed/,
+		);
+	} finally {
+		await pool.end();
+	}
+});
