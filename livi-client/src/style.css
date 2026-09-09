@@ -1,11 +1,11 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #29342d; background: #fbfaf7; font-synthesis: none; }
 * { box-sizing: border-box; }
 body { margin: 0; }
-button, textarea { font: inherit; }
+button, textarea, select { font: inherit; }
 button { cursor: pointer; border: 1px solid #d8ddd5; border-radius: 9px; padding: 11px 17px; color: inherit; background: #fff; }
 button:hover:enabled { background: #eef1e9; }
 button:disabled { opacity: .45; cursor: default; }
-button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid #4b7258; outline-offset: 3px; }
+button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #4b7258; outline-offset: 3px; }
 .app { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100dvh; }
 aside { background: #f1f1e9; border-right: 1px solid #e1e4da; padding: 30px 20px 18px; display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
 .brand { text-decoration: none; color: #35543e; font-size: 40px; font-family: Georgia, serif; letter-spacing: -2px; padding: 0 9px 8px; }
@@ -46,6 +46,15 @@ textarea::placeholder { color: #92988a; }
 .composer-actions button, .welcome button { background: #405f48; color: #fff; border-color: #405f48; font-size: 12px; }
 .composer-actions button:hover:enabled, .welcome button:hover:enabled { background: #324d39; }
 .error { color: #9c4437; background: #fff0e9; border-radius: 7px; padding: 12px; font-size: 12px; line-height: 1.6; }
+.studio-panel { border-bottom: 1px solid #e1e4da; padding: 16px 32px; font-size: 12px; }
+.studio-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.studio-heading strong { overflow-wrap: anywhere; }
+.studio-phase { color: #496c51; background: #eef1e9; border-radius: 20px; padding: 4px 9px; white-space: nowrap; }
+.studio-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.studio-controls label { width: 100%; color: #626f61; }
+.studio-controls select { flex: 1; min-width: 130px; max-width: 100%; border: 1px solid #d8ddd5; border-radius: 9px; padding: 9px; color: inherit; background: #fff; }
+.studio-controls button { padding: 9px 12px; font-size: 12px; }
+.studio-hint { font-size: 11px; color: #626f61; line-height: 1.6; margin: 10px 0 0; overflow-wrap: anywhere; }
 @media (max-width: 650px) {
   .app { grid-template-columns: 130px minmax(0, 1fr); }
   aside { padding: 20px 10px 14px; gap: 15px; }
@@ -58,6 +67,7 @@ textarea::placeholder { color: #92988a; }
   .connection { font-size: 9px; }
   header { padding: 20px 15px; font-size: 10px; }
   header .muted { display: none; }
+  .studio-panel { padding: 12px 15px; }
   .transcript { padding: 20px 15px; }
   .welcome { padding-top: 9vh; }
   footer { padding: 10px 12px 16px; }

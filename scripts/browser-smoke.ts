@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { startLiviServer } from "../livi-server/src/server.js";
-import { createModels, fauxAssistantMessage, fauxProvider } from "../packages/ai/dist/index.js";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "../packages/ai/dist/index.js";
+import { JsonStudioAdapter } from "./studio-smoke/adapter.js";
+import { eventually } from "./studio-smoke/connection.js";
+import { readRoom } from "./studio-smoke/room.js";
 
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
 const faux = fauxProvider({
@@ -29,6 +32,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const errors: string[] = [];
+let adapter: JsonStudioAdapter | undefined;
 page.on("pageerror", (error) => errors.push(error.message));
 page.setDefaultTimeout(15_000);
 try {
@@ -66,12 +70,93 @@ try {
 	await page.getByText("Recovered answer after server restart.", { exact: true }).waitFor();
 	assert.equal(await page.getByText("Recover this browser question.", { exact: true }).count(), 1);
 	assert.equal(await page.getByRole("navigation", { name: "Conversations" }).getByRole("button").count(), 2);
+	const fixture = await readRoom("scripts/studio-smoke/fixtures/synthetic-room.json");
+	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
+	await adapter.load(fixture.snapshot);
+	await adapter.connect(server);
+	await adapter.select([]);
+	await page
+		.getByLabel("Connected Studios", { exact: true })
+		.selectOption(JSON.stringify(["synthetic-room", "browser-studio"]));
+	await page.getByRole("button", { name: "Attach design", exact: true }).click();
+	await page.getByText("Name an object in your message", { exact: false }).waitFor();
+	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-red-1", position: [1.5, 1, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("The Red chair moved half a metre right."),
+	]);
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Move the Red chair half a metre right.");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("The Red chair moved half a metre right.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.deepEqual(adapter.snapshot.objects[0]!.position, [1.5, 1, 0]);
+	assert.equal(await page.locator(".message.toolResult").count(), 0, "Raw tool results must not enter chat");
+	assert.equal(await page.locator(".message").filter({ hasText: '"commandId"' }).count(), 0);
+	await page.reload();
+	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
+	assert.equal(adapter.emitted.length, 1, "Hydration must not resubmit a command");
+
+	// A dropped reply ends without recovery work and permits the next explicit request.
+	adapter.dropNextReply = true;
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("rotate_object", { objectId: "chair-red-1", rotation: [0, 0, Math.PI / 2] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Studio disconnected before a result arrived. Check the room before another edit."),
+	]);
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Rotate the Red chair 90 degrees.");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await eventually(() => adapter!.saveCount === 2, "browser action saved before dropped reply");
+	await adapter.disconnect();
+	await page
+		.getByText("Studio disconnected before a result arrived. Check the room before another edit.", { exact: true })
+		.waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(await page.getByRole("button", { name: "Disconnect design", exact: true }).isDisabled(), false);
+	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
+	await adapter.load(fixture.snapshot);
+	await adapter.connect(server);
+	await page.getByRole("region", { name: "Studio attachment" }).getByText("Ready", { exact: true }).waitFor();
+	assert.equal(adapter.emitted.length, 0, "Reconnect must not resend an edit");
+	assert.equal(
+		adapter.requests.every((type) => type === "context"),
+		true,
+		"Reconnect sends no status lookup or edit",
+	);
+	const currentRevision = adapter.snapshot.revision;
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-red-1", position: [2, 1, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Moved the Red chair to two metres."),
+	]);
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Move the Red chair to [2,1,0].");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Moved the Red chair to two metres.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(adapter.emitted.length, 1);
+	assert.equal(
+		adapter.emitted[0]!.expectedRevision,
+		currentRevision,
+		"Next request uses Studio current state after the lost reply",
+	);
+	assert.equal(adapter.saveCount, 3);
+	assert.deepEqual(adapter.snapshot.objects[0]!.position, [2, 1, 0]);
+	await page.getByRole("button", { name: "Disconnect design", exact: true }).click();
+	await page.getByText("No design attached", { exact: true }).waitFor();
 	await mkdir("artifacts", { recursive: true });
 	await page.screenshot({ path: "artifacts/chat-browser.png", fullPage: true });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.screenshot({ path: "artifacts/chat-browser-mobile.png", fullPage: true });
 	assert.deepEqual(errors, []);
-	console.log("Browser verification passed: two chats, streaming, switching, Stop, reload, restart recovery.");
+	console.log(
+		"Browser verification passed: two chats, streaming, Stop, restart recovery, Studio attachment, named object without selection, saved response, lost reply, and next explicit edit after reconnect. Synthetic JSON saves only.",
+	);
 } finally {
 	await browser.close();
+	await adapter?.disconnect();
 	await server.close();
 	await rm(directory, { recursive: true, force: true });
 }

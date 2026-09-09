@@ -227,6 +227,9 @@ importers:
       '@earendil-works/pi-server':
         specifier: workspace:*
         version: link:../server
+      typebox:
+        specifier: 1.3.7
+        version: 1.3.7
 
   packages/protocol:
     dependencies:

@@ -6,6 +6,10 @@ import {
 	SessionDirectory,
 	SessionManagement,
 	type SessionSummary,
+	StudioDirectory,
+	StudioSession,
+	type StudioSessionState,
+	type StudioSummary,
 	Transcript,
 	type TranscriptState,
 } from "@livi/decorator-agent/contracts";
@@ -35,6 +39,11 @@ function App() {
 	});
 	const [transcript, setTranscript] = useState<TranscriptState>();
 	const [controller, setController] = useState<AgentController>();
+	const [studios, setStudios] = useState<StudioSummary[]>([]);
+	const [studio, setStudio] = useState<StudioSession>();
+	const [studioState, setStudioState] = useState<StudioSessionState>();
+	const [studioChoice, setStudioChoice] = useState("");
+	const [studioChanging, setStudioChanging] = useState(false);
 	const [draft, setDraft] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [attaching, setAttaching] = useState(false);
@@ -91,12 +100,16 @@ function App() {
 			await client.connect();
 			if (disposed) return;
 			binding = createRemoteServiceBinding({
-				services: [SessionDirectory, SessionManagement],
+				services: [SessionDirectory, SessionManagement, StudioDirectory],
 				transport: createClientServiceTransport(client, () => ({ serverId: client!.serverId })),
 				onError: (failure) => retry(failure.message),
 			});
 			const directory = binding.use(SessionDirectory);
 			const management = binding.use(SessionManagement);
+			const studioDirectory = binding.use(StudioDirectory);
+			studioDirectory.state.subscribe((value) => {
+				if (!disposed) setStudios(value.studios);
+			});
 			directory.state.subscribe((value) => {
 				if (!disposed) setSessions(value.sessions);
 			});
@@ -104,6 +117,7 @@ function App() {
 			if (disposed) return;
 			const available = directory.state.value?.sessions ?? [];
 			setSessions(available);
+			setStudios(studioDirectory.state.value?.studios ?? []);
 			setSelected((previous) => (available.some((session) => session.sessionId === previous) ? previous : null));
 			setConnection({ client, management });
 			setStatus("Connected");
@@ -123,6 +137,9 @@ function App() {
 		let binding: RemoteServiceBinding | undefined;
 		setController(undefined);
 		setTranscript(undefined);
+		setStudio(undefined);
+		setStudioState(undefined);
+		setStudioChoice("");
 		setAttaching(Boolean(connection && selected));
 		if (!connection || !selected) return;
 		void (async () => {
@@ -137,7 +154,7 @@ function App() {
 			const target = connection.client.attachment;
 			if (!target || target.sessionId !== selected) throw new Error("Session attachment was replaced");
 			binding = createRemoteServiceBinding({
-				services: [AgentController, Transcript],
+				services: [AgentController, Transcript, StudioSession],
 				transport: createClientServiceTransport(connection.client, () => target),
 				onError: (failure) => {
 					if (!disposed) setError(failure.message);
@@ -145,6 +162,10 @@ function App() {
 			});
 			const agent = binding.use(AgentController);
 			const source = binding.use(Transcript);
+			const studioService = binding.use(StudioSession);
+			studioService.state.subscribe((value) => {
+				if (!disposed) setStudioState(value);
+			});
 			source.state.subscribe((value) => {
 				if (!disposed) setTranscript(value);
 			});
@@ -152,6 +173,8 @@ function App() {
 			if (disposed) return;
 			setTranscript(source.state.value);
 			setController(agent);
+			setStudio(studioService);
+			setStudioState(studioService.state.value);
 			setAttaching(false);
 		})().catch((failure: unknown) => {
 			if (!disposed) {
@@ -174,7 +197,9 @@ function App() {
 	const operation = snapshot?.operation;
 	const messages =
 		snapshot?.transcript.flatMap((entry) =>
-			entry.type === "message" ? [{ id: entry.id, message: entry.message }] : [],
+			entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")
+				? [{ id: entry.id, message: entry.message }]
+				: [],
 		) ?? [];
 	if (operation?.streamingMessage)
 		messages.push({ id: `stream-${operation.id}`, message: operation.streamingMessage });
@@ -195,7 +220,7 @@ function App() {
 	}
 
 	async function send() {
-		if (!controller || !draft.trim() || operation || busy) return;
+		if (!controller || !draft.trim() || operation || busy || studioChanging) return;
 		setBusy(true);
 		setError("");
 		const message = draft.trim();
@@ -223,6 +248,30 @@ function App() {
 			setBusy(false);
 		}
 	}
+
+	async function changeStudio(detach = false) {
+		if (!studio || studioChanging || operation) return;
+		const target = studios.find((item) => JSON.stringify([item.designId, item.tabId]) === studioChoice);
+		if (!detach && (!target || target.phase !== "ready")) return;
+		setStudioChanging(true);
+		setError("");
+		try {
+			await studio.bind(detach ? null : { designId: target!.designId, tabId: target!.tabId }, context);
+			setStudioChoice("");
+		} catch (failure) {
+			setError(failure instanceof Error ? failure.message : String(failure));
+		} finally {
+			setStudioChanging(false);
+		}
+	}
+
+	const bindingLocked = !studio || studioChanging || Boolean(operation);
+	const attachedStudio = studios.find(
+		(item) => item.designId === studioState?.binding?.designId && item.tabId === studioState.binding.tabId,
+	);
+	const selectedObjects =
+		studioState?.snapshot?.objects.filter((object) => studioState.snapshot?.selectedObjectIds.includes(object.id)) ??
+		[];
 
 	return (
 		<div className="app">
@@ -269,6 +318,62 @@ function App() {
 					<span>Make room for something new</span>
 					<span className="muted">Livi</span>
 				</header>
+				<section className="studio-panel" aria-label="Studio attachment">
+					<div className="studio-heading">
+						<strong>
+							{studioState?.binding
+								? (attachedStudio?.label ?? studioState.binding.designId)
+								: "No design attached"}
+						</strong>
+						<output className="studio-phase" aria-live="polite">
+							{!connection
+								? "Offline"
+								: !studioState
+									? "Select a conversation"
+									: studioState.phase === "ready"
+										? "Ready"
+										: "Offline"}
+						</output>
+					</div>
+					{studioState?.binding && <p className="muted">Design {studioState.binding.designId}</p>}
+					<div className="studio-controls">
+						<label htmlFor="studio-choice">Connected Studios</label>
+						<select
+							id="studio-choice"
+							value={studioChoice}
+							disabled={bindingLocked}
+							onChange={(event) => setStudioChoice(event.target.value)}
+						>
+							<option value="">Choose a Studio…</option>
+							{studios.map((item) => (
+								<option
+									key={JSON.stringify([item.designId, item.tabId])}
+									value={JSON.stringify([item.designId, item.tabId])}
+									disabled={item.phase !== "ready"}
+								>
+									{item.label} · {item.designId} · {item.phase}
+								</option>
+							))}
+						</select>
+						<button type="button" disabled={bindingLocked || !studioChoice} onClick={() => void changeStudio()}>
+							{studioState?.binding ? "Change design" : "Attach design"}
+						</button>
+						{studioState?.binding && (
+							<button type="button" disabled={bindingLocked} onClick={() => void changeStudio(true)}>
+								Disconnect design
+							</button>
+						)}
+					</div>
+					<p className="studio-hint">
+						{!studioState?.binding
+							? "General chat is available. Attach a ready Studio for room actions."
+							: !connection || studioState.phase === "offline"
+								? "Studio is offline. Chat remains available; room actions need a connection."
+								: selectedObjects.length
+									? `Selected: ${selectedObjects.map((object) => `${object.name} (${object.id})`).join(", ")}`
+									: "Name an object in your message, like ‘move the sofa 0.5 metres right’. Selection is optional."}
+					</p>
+				</section>
 				<section className="transcript" aria-label="Chat transcript" aria-busy={Boolean(operation)}>
 					{!messages.length && (
 						<div className="welcome">
@@ -293,7 +398,7 @@ function App() {
 						if (!text) return null;
 						return (
 							<article key={id} className={`message ${message.role}`}>
-								<h2>{message.role === "user" ? "You" : message.role === "assistant" ? "Livi" : "Tool"}</h2>
+								<h2>{message.role === "user" ? "You" : "Livi"}</h2>
 								<Markdown skipHtml>{text}</Markdown>
 							</article>
 						);
@@ -345,7 +450,7 @@ function App() {
 									Stop
 								</button>
 							) : (
-								<button type="submit" disabled={!controller || !draft.trim() || busy}>
+								<button type="submit" disabled={!controller || !draft.trim() || busy || studioChanging}>
 									Send
 								</button>
 							)}

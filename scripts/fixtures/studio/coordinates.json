@@ -1,0 +1,7 @@
+{
+  "provenance": "illustrative contract fixture; not database-derived",
+  "sourceCommit": "d113caec1ee3bbc8b533a4b5a00840bab0c1e991",
+  "roomDimensions": [6, 4, 2.8],
+  "move": { "before": [1, 1, 0], "target": [2, 1, 0], "renderedBefore": [-2, 0, 1], "renderedAfter": [-1, 0, 1] },
+  "rotate": { "frontView": 1, "before": [0, 0, 0], "target": [0, 0, 1.5707963267948966], "renderedYaw": 1.5707963267948966 }
+}

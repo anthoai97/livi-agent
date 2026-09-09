@@ -6,6 +6,10 @@ const server = await startLiviServer({
 	dataDirectory: process.env.LIVI_DATA_DIR,
 	modelId: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
 	apiKey: process.env.GEMINI_API_KEY,
+	debug: process.env.LIVI_DEBUG === "1",
+	studioAllowedOrigins: process.env.STUDIO_ALLOWED_ORIGINS?.split(",")
+		.map((origin) => origin.trim())
+		.filter(Boolean),
 });
 console.log(`Livi listening on http://${process.env.HOST ?? "127.0.0.1"}:${server.port}`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

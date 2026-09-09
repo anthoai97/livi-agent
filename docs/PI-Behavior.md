@@ -42,6 +42,6 @@ Instructions guide the model; code enforces conditions before mutation. For exam
 
 Flow: **behavior + guide + room JSON + request → tool call → validation → Studio save → explanation.**
 
-Start with **one behavior document, one placement guide, and validation in the three tools**, composed in `DecoratorSession`.
+Start with **one behavior document, one placement guide, and validation in the three mutation tools**, composed in `DecoratorSession`.
 
 References: [PI harness interfaces](../packages/agent/src/harness/agent-harness.ts), [skill loading](../packages/agent/src/harness/skills.ts), [current DecoratorSession](../packages/decorator-agent/src/decorator-session.ts).

@@ -1,0 +1,117 @@
+{
+  "provenance": "synthetic",
+  "sourceDescription": "Hand-authored deterministic two-chair room. Not exported from a database.",
+  "coordinates": {
+    "units": "metres",
+    "axes": "+X right,+Y back,+Z up",
+    "origin": "floor front-left",
+    "rotation": "XYZ radians; yaw only"
+  },
+  "snapshot": {
+    "designId": "synthetic-room",
+    "revision": "synthetic-initial-1",
+    "geometry": {
+      "floor": [
+        [
+          0,
+          0
+        ],
+        [
+          5,
+          0
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          0,
+          4
+        ]
+      ],
+      "height": 2.8
+    },
+    "openings": [
+      {
+        "id": "door-1",
+        "kind": "door",
+        "position": [
+          0,
+          1,
+          0
+        ],
+        "dimensions": [
+          0.1,
+          0.9,
+          2.1
+        ]
+      }
+    ],
+    "objects": [
+      {
+        "id": "chair-red-1",
+        "name": "Red chair",
+        "category": "chair",
+        "dimensions": [
+          0.5,
+          0.5,
+          0.9
+        ],
+        "position": [
+          1,
+          1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "material": {
+          "color": "red",
+          "roughness": 0.7
+        },
+        "catalogId": "same-chair-product"
+      },
+      {
+        "id": "chair-blue-2",
+        "name": "Blue chair",
+        "category": "chair",
+        "dimensions": [
+          0.5,
+          0.5,
+          0.9
+        ],
+        "position": [
+          3,
+          1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "material": {
+          "color": "blue",
+          "roughness": 0.7
+        },
+        "catalogId": "same-chair-product"
+      }
+    ],
+    "selectedObjectIds": [],
+    "sourceMetadata": {
+      "keep": "unrelated exported values stay intact"
+    }
+  }
+}

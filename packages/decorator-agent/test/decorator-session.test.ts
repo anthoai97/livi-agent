@@ -5,6 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { DecoratorSession } from "../src/decorator-session.ts";
 
 const cleanup: (() => Promise<void>)[] = [];
+const toolNames = ["move_object", "rotate_object", "remove_object", "get_room_context"];
 afterEach(async () => {
 	for (const close of cleanup.splice(0).reverse()) await close();
 });
@@ -27,7 +28,7 @@ it("returns durable admission while generation runs and survives caller cancella
 	const release = Promise.withResolvers<void>();
 	faux.setResponses([
 		async (input) => {
-			expect(input.tools ?? []).toEqual([]);
+			expect(input.tools?.map((tool) => tool.name)).toEqual(toolNames);
 			started.resolve();
 			await release.promise;
 			return fauxAssistantMessage("Use warm lighting.");
@@ -100,7 +101,7 @@ it("rejects unsolicited tool calls without an execution environment", async () =
 	faux.setResponses([
 		fauxAssistantMessage(fauxToolCall("bash", { command: "printf should-never-execute" }), { stopReason: "toolUse" }),
 		(input) => {
-			expect(input.tools ?? []).toEqual([]);
+			expect(input.tools?.map((tool) => tool.name)).toEqual(toolNames);
 			expect(input.messages).toContainEqual(
 				expect.objectContaining({
 					role: "toolResult",
@@ -115,8 +116,8 @@ it("rejects unsolicited tool calls without an execution environment", async () =
 	const admitted = await runtime.controller.prompt({ message: "Help with my room" }, context);
 	expect(admitted.accepted).toBe(true);
 	await runtime.lane.waitForIdle(context);
-	expect(await runtime.harness.getTools(context)).toEqual([]);
-	expect(await runtime.lane.getActiveTools(context)).toEqual([]);
+	expect((await runtime.harness.getTools(context)).map((tool) => tool.name)).toEqual(toolNames);
+	expect(await runtime.lane.getActiveTools(context)).toEqual(toolNames);
 	expect(faux.state.callCount).toBe(2);
 	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant", stopReason: "stop" } });
