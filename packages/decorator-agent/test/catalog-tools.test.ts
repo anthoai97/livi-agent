@@ -3,7 +3,6 @@ import { MemorySessionRepo } from "@earendil-works/pi-agent-core/harness/session
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import {
-	CatalogError,
 	type CatalogProduct,
 	type CatalogRecommendationDetails,
 	createMemoryCatalogAccess,
@@ -350,10 +349,8 @@ it("unknown color, category, dimensions, and mixed currency cannot satisfy requi
 	).toEqual(["usd-400", "usd-250"]);
 });
 
-it("explains unsupported price filters instead of dropping them", async () => {
+it("rejects a currency without a price bound", async () => {
 	const catalog = createMemoryCatalogAccess(catalogProducts);
-	await expect(search(catalog, { category: "desk", maxAmountMinor: 50000 })).rejects.toBeInstanceOf(CatalogError);
-	await expect(search(catalog, { category: "desk", maxAmountMinor: 50000 })).rejects.toThrow(/unsupported_filter/);
 	await expect(search(catalog, { category: "desk", currency: "USD" })).rejects.toThrow(/unsupported_filter/);
 });
 
@@ -743,7 +740,7 @@ it("refinements reset traversal exclusions while keeping intentional exclusions 
 			maxWidth: 0.9,
 			exclusiveMaxWidth: true,
 		},
-		pagination: { offset: 0, limit: 8, exhausted: false, excludeIds: ["usd-250", "rejected"] },
+		pagination: { offset: 0, limit: 8, exhausted: false },
 		shownIds: ["usd-250", "usd-400"],
 		binding: null,
 		followUp: "show_more",
@@ -876,4 +873,19 @@ it("blocks pre-search mutations for a product swap requested in the same positio
 		),
 	).rejects.toThrow(/mutation_blocked/);
 	expect(fake!.state.commands).toEqual([]);
+});
+
+it("defaults an explicit price bound to USD without adding a room budget", async () => {
+	const { runtime, faux } = await session({ catalog: createMemoryCatalogAccess(catalogProducts) });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", maxAmountMinor: 50000 }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Desks under $500."),
+	]);
+	await runtime.controller.prompt({ message: "Show desks under 500" }, context);
+	await runtime.lane.waitForIdle(context);
+	const result = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(result?.resolvedConstraints.maxPrice).toEqual({ amountMinor: 50000, currency: "USD" });
+	expect(result?.products.map((p) => p.catalogId).sort()).toEqual(["usd-250", "usd-400"]);
 });

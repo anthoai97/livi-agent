@@ -6,6 +6,7 @@ import {
 	createMemoryCatalogAccess,
 	normalizeCatalogSearchRequest,
 	requestFromConstraints,
+	sanitizeCatalogProduct,
 } from "../src/catalog.ts";
 
 it("round trips original intent and grounded evidence without creating financial constraints", () => {
@@ -66,4 +67,18 @@ it("ranks natural language and labels retailer options separately from actual co
 	expect(result.products.map((p) => p.catalogId)).toEqual(["b", "a"]);
 	expect(result.products[0]?.reasons[0]).toBe("Actual asset color: yellow");
 	expect(result.products[1]?.reasons[0]).toContain("Retailer offers yellow; actual asset color: Ash");
+});
+
+it("renders saved public S3 image references without signing and preserves literal plus keys", () => {
+	const saved = {
+		imageUrl: null,
+		imageRef: "s3://livinit-storage-prod/asset_image/sofa+24/image 1.jpg",
+		productUrl: null,
+	} as CatalogProduct;
+	const product = sanitizeCatalogProduct(saved);
+	expect(product.imageUrl).toBe(
+		"https://livinit-storage-prod.s3.us-east-2.amazonaws.com/asset_image/sofa%2B24/image%201.jpg",
+	);
+	expect(product.imageRef).toBe(saved.imageRef);
+	expect(sanitizeCatalogProduct({ ...saved, imageRef: "s3://private-bucket/image.jpg" }).imageUrl).toBeNull();
 });

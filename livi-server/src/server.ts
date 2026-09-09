@@ -84,7 +84,8 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 	if (!options.catalog && catalogUrl) {
 		catalogPool = createCatalogPool(catalogUrl);
 		catalog = createPostgresCatalogAccess(catalogPool, {
-			models: createCatalogModels({ apiKey: options.apiKey, modelId: options.modelId }),
+			models: createCatalogModels({ apiKey: options.apiKey }),
+			onDebug,
 		});
 	}
 	const studio = new StudioBroker();

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
 	type CatalogAccess,
 	type CatalogDimensions,
@@ -5,10 +6,8 @@ import {
 	type CatalogProduct,
 	catalogDeadline,
 	catalogImageRef,
-	catalogProductMatches,
 	catalogReasons,
 	catalogResolvedConstraints,
-	compareCatalogProducts,
 	httpUrl,
 	metreDimension,
 	type NormalizedCatalogSearch,
@@ -17,7 +16,7 @@ import {
 } from "@livi/decorator-agent";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
-import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels, validateCatalogAssessments } from "./catalog-models.js";
+import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels } from "./catalog-models.js";
 
 const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
@@ -94,115 +93,105 @@ function catalogTls(url: URL, local: boolean): PoolConfig["ssl"] {
 	return { rejectUnauthorized: true };
 }
 
-export function createPostgresCatalogAccess(pool: Pool, options: { models?: CatalogModels } = {}): CatalogAccess {
+export function createPostgresCatalogAccess(
+	pool: Pool,
+	options: {
+		models?: CatalogModels;
+		onDebug?: (event: string, fields: Record<string, unknown>) => void;
+	} = {},
+): CatalogAccess {
 	return {
 		async search(request, signal) {
 			signal?.throwIfAborted();
+			const requestId = randomUUID();
+			const started = Date.now();
+			const debug = (event: string, fields: Record<string, unknown>) => {
+				try {
+					options.onDebug?.(event, { requestId, ...fields });
+				} catch {
+					/* Logging must not change search behavior. */
+				}
+			};
+			const stage = async <T>(name: "embed" | "retrieve", run: () => Promise<T>): Promise<T> => {
+				const start = Date.now();
+				debug("catalog.stage.start", { stage: name, deadlineMs: name === "retrieve" ? 8000 : 30000 });
+				try {
+					const result = await run();
+					debug("catalog.stage.complete", { stage: name, durationMs: Date.now() - start });
+					return result;
+				} catch (error) {
+					debug("catalog.stage.error", {
+						stage: name,
+						durationMs: Date.now() - start,
+						errorCode: error instanceof CatalogError ? error.code : "unexpected_error",
+						diagnostic: error instanceof CatalogError ? error.diagnostic : undefined,
+					});
+					throw error;
+				}
+			};
 			const normalized = normalizeCatalogSearchRequest(request);
-			if (normalized.minPrice || normalized.maxPrice) {
+			if (
+				[normalized.minPrice, normalized.maxPrice].some((bound) => bound && bound.currency.toUpperCase() !== "USD")
+			) {
 				throw new CatalogError(
 					"unsupported_filter",
-					"Price comparisons require a verified matching currency; catalog prices have no currency in this source",
+					"Catalog prices use USD; currency conversion is not supported",
 				);
 			}
-			const broad =
-				Boolean(normalized.query ?? normalized.originalQuery) &&
-				(!normalized.categories ||
-					(normalized.purpose === "discovery" && !normalized.target && !normalized.roomCategories.length));
-			if (normalized.offset >= (broad ? 160 : 80))
-				throw new CatalogError(
-					"invalid_arguments",
-					"Offset is outside this bounded candidate batch; use show_more to continue",
-				);
-			let rows: DesignAssetRegistryRow[];
-			let unindexedCount: number | undefined;
-			let truncated: boolean;
-			if (broad) {
-				if (!options.models)
-					throw new CatalogError("model_failed", "Catalog embedding model is not configured", { stage: "embed" });
-				const embedding = await options.models.embedQuery(normalized.query ?? normalized.originalQuery!, signal);
+			const query =
+				normalized.query ??
+				normalized.originalQuery ??
+				[normalized.color, normalized.style, normalized.material, normalized.category].filter(Boolean).join(" ");
+			if (!query.trim()) throw new CatalogError("invalid_arguments", "Provide a search query or product filters");
+			debug("catalog.search.start", {
+				strategy: "vector",
+				purpose: normalized.purpose,
+				offset: normalized.offset,
+				limit: normalized.limit,
+				excludedCount: normalized.excludeIds.length,
+				queryLength: query.length,
+			});
+			if (!options.models)
+				throw new CatalogError("model_failed", "Catalog embedding model is not configured", { stage: "embed" });
+			const embedding = await stage("embed", async () => {
+				const vector = await catalogDeadline((active) => options.models!.embedQuery(query, active), signal);
 				if (
-					embedding.length !== CATALOG_EMBEDDING_DIMENSIONS ||
-					!embedding.every(Number.isFinite) ||
-					!embedding.some((value) => value !== 0)
+					vector.length !== CATALOG_EMBEDDING_DIMENSIONS ||
+					!vector.every(Number.isFinite) ||
+					!vector.some((v) => v !== 0)
 				)
 					throw new CatalogError("model_failed", "Catalog embedding response is invalid", { stage: "embed" });
-				const vector = searchSql(normalized, { embedding });
-				const text = searchSql(normalized, { unindexed: true });
-				const [indexed, unindexed] = await Promise.all([
-					catalogQuery(pool, vector.text, vector.values, signal),
-					catalogQuery(pool, text.text, text.values, signal),
-				]);
-				unindexedCount = Math.min(unindexed.length, 80);
-				truncated = indexed.length > 80 || unindexed.length > 80;
-				rows = [...indexed.slice(0, 80), ...unindexed.slice(0, 80)];
-			} else {
-				const { text, values } = searchSql(normalized);
-				rows = await catalogQuery(pool, text, values, signal);
-				truncated = rows.length > 80;
-				rows = rows.slice(0, 80);
-			}
-			const products = rows.flatMap((row) => {
-				const product = mapRegistryRow(row);
-				return product ? [product] : [];
+				return vector;
 			});
-			const candidates = products.filter((product) => catalogProductMatches(product, normalized));
-			let ranked = candidates;
-			if (candidates.length) {
-				if (!options.models)
-					throw new CatalogError("model_failed", "Catalog validation model is not configured", {
-						stage: "validate",
-					});
-				let verdicts: ReturnType<typeof validateCatalogAssessments>;
-				try {
-					verdicts = validateCatalogAssessments(
-						await catalogDeadline(
-							(active) => options.models!.validateCandidates(candidates, normalized, active),
-							signal,
-						),
-						candidates,
-					);
-				} catch (error) {
-					if (error instanceof CatalogError) throw error;
-					throw new CatalogError("model_failed", "Catalog attribute validation failed", { stage: "validate" });
-				}
-				const byId = new Map(verdicts.map((verdict) => [verdict.catalogId, verdict]));
-				ranked = candidates.filter((product) => byId.get(product.catalogId)?.matches);
-				ranked.sort(
-					(left, right) =>
-						byId.get(right.catalogId)!.score - byId.get(left.catalogId)!.score ||
-						compareCatalogProducts(left, right, normalized),
-				);
-			} else ranked.sort((left, right) => compareCatalogProducts(left, right, normalized));
-			const page = ranked.slice(normalized.offset, normalized.offset + normalized.limit);
+			const { text, values } = searchSql(normalized, { embedding });
+			const rows = await stage("retrieve", () => catalogQuery(pool, text, values, signal));
+			const hasMore = rows.length > normalized.limit;
+			const products = rows.slice(0, normalized.limit).map((row) => {
+				const product = mapRegistryRow(row);
+				if (!product)
+					throw new CatalogError("query_failed", "Catalog product identity is missing", { stage: "retrieve" });
+				return { ...product, reasons: catalogReasons(product, normalized) };
+			});
+			debug("catalog.search.complete", {
+				durationMs: Date.now() - started,
+				retrievedCount: rows.length,
+				returnedCount: products.length,
+				hasMore,
+			});
 			return {
-				products: page.map((product) => ({
-					...product,
-					reasons: catalogReasons(product, normalized),
-				})),
+				products,
 				retrieval: {
-					strategy: broad ? "vector_text" : normalized.categories ? "category_text" : "text",
-					candidateCount: products.length,
-					candidateLimit: broad ? 160 : 80,
-					truncated,
-					...(unindexedCount === undefined ? {} : { unindexedCount }),
+					strategy: "vector",
+					candidateCount: rows.length,
+					candidateLimit: normalized.limit + 1,
+					truncated: hasMore,
 				},
 				resolvedConstraints: catalogResolvedConstraints(normalized),
 				pagination: {
 					limit: normalized.limit,
 					offset: normalized.offset,
-					exhausted: !truncated && normalized.offset + page.length >= ranked.length,
-					nextOffset: normalized.offset + page.length,
-					excludeIds: [
-						...normalized.omitIds,
-						...products
-							.filter(
-								(product) =>
-									!ranked.some((entry) => entry.catalogId === product.catalogId) ||
-									ranked.slice(0, normalized.offset).some((entry) => entry.catalogId === product.catalogId),
-							)
-							.map((product) => product.catalogId),
-					],
+					exhausted: !hasMore,
+					nextOffset: normalized.offset + products.length,
 				},
 			};
 		},
@@ -237,6 +226,8 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 		width === null && depth === null && height === null ? null : { width, depth, height, unit: "m" };
 	const availableColors = asTextArray(row.available_colors);
 	const description = asText(row.description) ?? asText(row.asset_description);
+	const price = asNumber(row.price);
+	const amountMinor = price === null ? 0 : Math.round(price * 100);
 	return sanitizeCatalogProduct({
 		catalogId,
 		name: asText(row.name) ?? "",
@@ -244,7 +235,10 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 		productUrl: httpUrl(row.product_url),
 		imageRef: catalogImageRef(row.image_url),
 		dimensions,
-		price: null,
+		price:
+			price !== null && price > 0 && Number.isSafeInteger(amountMinor) && amountMinor > 0
+				? { amountMinor, currency: "USD" }
+				: null,
 		category: asText(row.category),
 		style: asText(row.style),
 		color: asText(row.color),
@@ -258,7 +252,7 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 
 export function searchSql(
 	request: NormalizedCatalogSearch,
-	options: { embedding?: number[]; unindexed?: boolean } = {},
+	options: { embedding: number[] },
 ): {
 	text: string;
 	values: Array<string | number | string[]>;
@@ -284,29 +278,21 @@ export function searchSql(
 	pushDimension(where, add, "width", request.minWidth, request.maxWidth, request.exclusiveMaxWidth);
 	pushDimension(where, add, "depth", request.minDepth, request.maxDepth, request.exclusiveMaxDepth);
 	pushDimension(where, add, "height", request.minHeight, request.maxHeight, request.exclusiveMaxHeight);
+	if (request.minPrice || request.maxPrice) {
+		where.push("price IS NOT NULL AND price > 0 AND price < 'Infinity'::real");
+		if (request.minPrice) where.push(`round(price::numeric * 100) >= ${add(request.minPrice.amountMinor)}`);
+		if (request.maxPrice) where.push(`round(price::numeric * 100) <= ${add(request.maxPrice.amountMinor)}`);
+	}
 	if (request.excludeIds.length) where.push(`NOT (asset_id::text = ANY(${add(request.excludeIds)}::text[]))`);
-	const queryParam = add(request.query ?? request.originalQuery ?? "");
-	if (options.unindexed)
-		where.push(
-			`NOT EXISTS (SELECT 1 FROM pipeline.asset_embeddings e WHERE e.asset_id = r.asset_id AND e.embedding IS NOT NULL)`,
-		);
-	const vectorParam = options.embedding ? add(JSON.stringify(options.embedding)) : undefined;
-
-	const roomParam = add(request.roomCategories);
-	const limitParam = add(81);
-
+	const vectorParam = add(JSON.stringify(options.embedding));
+	const limitParam = add(request.limit + 1);
+	const offsetParam = add(request.offset);
 	return {
-		text: `SELECT ${SELECT_COLUMNS} FROM ${REGISTRY} r ${vectorParam ? "JOIN (SELECT asset_id, embedding FROM pipeline.asset_embeddings WHERE embedding IS NOT NULL) e USING(asset_id)" : ""}
+		text: `SELECT ${SELECT_COLUMNS} FROM ${REGISTRY} r
+JOIN (SELECT asset_id, embedding FROM pipeline.asset_embeddings WHERE embedding IS NOT NULL) e USING(asset_id)
 WHERE ${where.join(" AND ")}
-ORDER BY
-  ${vectorParam ? `e.embedding <=> ${vectorParam}::vector ASC,` : ""}
-  (SELECT count(*) FROM unnest(regexp_split_to_array(lower(${queryParam}::text), '[^a-z0-9]+')) AS q(token)
-   WHERE length(q.token) > 2 AND q.token <> ALL(ARRAY['the','with','for','and','can','you','current','replace'])
-   AND position(q.token IN lower(concat_ws(' ', name, category, description, asset_description, color, style, shape, materials))) > 0) DESC,
-  CASE WHEN cardinality(${roomParam}::text[]) > 0 AND category IS NOT NULL AND lower(btrim(category)) = ANY(${roomParam}::text[]) THEN 0 ELSE 1 END,
-  name ASC NULLS LAST,
-  asset_id::text ASC
-LIMIT ${limitParam}`,
+ORDER BY e.embedding <=> ${vectorParam}::vector ASC, asset_id::text ASC
+LIMIT ${limitParam} OFFSET ${offsetParam}`,
 		values,
 	};
 }

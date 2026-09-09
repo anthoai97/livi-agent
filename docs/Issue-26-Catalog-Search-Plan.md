@@ -1,14 +1,18 @@
 # Plan: catalog search #26
 
-[Issue](https://github.com/anthoai97/livi-agent/issues/26). Implementation and validation notes: [Catalog-Search.md](Catalog-Search.md).
+[Issue](https://github.com/anthoai97/livi-agent/issues/26). Current behavior and source evidence: [Catalog-Search.md](Catalog-Search.md).
 
-1. Verify `.env` read access, embedding model/dimensions/provenance/coverage. Reproduce yellow-sectional failure.
-2. Extend existing catalog functions/contracts: original query, search purpose, room target/revision, persisted constraints. No invented budget/currency.
-3. Retrieve: resolved category → top 80 text-ranked candidates; broad query → pipeline-owned pgvector index + bounded text candidates for unindexed products. Hydrate registry; match requested constraints. No added catalog exclusions; keep L-shaped products.
-4. LLM attribute check → rank → eight cards by default. Actual asset color ≠ retailer color option. Preserve target, exclusions, follow-ups, saved cards; honest pagination.
-5. Distinguish backend/model failure from empty matches. Sanitized diagnostics, cancellation, timeouts. Validate catalog/tool/pgvector tests, `pnpm check`, original prompt against live data; browser check if UI changes.
+## Revised scope
 
-Four PRs via `gh stack`: contracts/diagnostics → category retrieval → vectors → ranking/follow-ups/validation. Pipeline owns index maintenance. Replacement execution: [#27](https://github.com/anthoai97/livi-agent/issues/27).
+1. Preserve original query, search purpose, target/design/revision, explicit constraints and room-mutation safeguards.
+2. Embed every search query using the existing pipeline-compatible model. Retrieve eligible indexed registry products by pgvector cosine distance; apply explicit SQL filters before pagination. No category/text route or unindexed supplementation.
+3. Return eight products by default in vector order. Hydrate images using the web-pipeline public S3 URL convention and prices with the user-selected USD default. Remove attribute validation, evidence assessment and reranking code.
+4. Use conventional filtered-result offsets and a one-row lookahead. `show_more` excludes shown IDs and retains the prior starting offset (normally zero); refinements reset traversal while preserving intentional exclusions and tighter bounds. Persist saved cards and target.
+5. Keep safe embedding/retrieval stage diagnostics, cancellation and deadlines. Check ordering, filters, pagination, metadata and tool safeguards with targeted tests and required workspace checks.
+
+Pipeline owns the existing index. Datasource/description improvements are deferred. Unindexed products are outside this retrieval path. Replacement execution remains [#27](https://github.com/anthoai97/livi-agent/issues/27).
+
+The original four-stage contracts → category → vectors → ranking plan was implemented in stacked drafts, then superseded by this simplified scope. It is not the current retrieval contract.
 
 ## Unresolved questions
 

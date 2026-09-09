@@ -25,7 +25,7 @@ export class CatalogError extends Error {
 
 /** Safe internal metadata only; never include SQL, URLs, credentials or provider messages. */
 export interface CatalogDiagnostic {
-	stage: "connect" | "retrieve" | "embed" | "validate";
+	stage: "connect" | "retrieve" | "embed";
 	backendCode?: string;
 }
 
@@ -38,12 +38,11 @@ export interface CatalogTarget {
 	category: string;
 }
 export interface CatalogRetrieval {
-	strategy: "category_text" | "vector_text" | "text";
+	strategy: "vector";
 	candidateCount: number;
 	candidateLimit: number;
-	/** More retrieval candidates may exist beyond this bounded batch. */
+	/** A one-row lookahead found more eligible indexed products. */
 	truncated: boolean;
-	unindexedCount?: number;
 }
 
 export interface CatalogMoney {
@@ -79,10 +78,8 @@ export interface CatalogProduct {
 }
 
 export interface CatalogPagination {
-	/** Continue within this ranked batch using returned count, never the requested limit. */
+	/** Next offset for the same filters and exclusions. */
 	nextOffset?: number;
-	/** Rejected or offset-skipped candidates to omit on show_more. */
-	excludeIds?: string[];
 	limit: number;
 	offset: number;
 	exhausted: boolean;
@@ -279,10 +276,19 @@ export function catalogImageRef(value: unknown): string | null {
 }
 
 export function sanitizeCatalogProduct(product: CatalogProduct): CatalogProduct {
+	const imageRef = catalogImageRef(product.imageRef) ?? catalogImageRef(product.imageUrl);
+	let imageUrl = httpUrl(product.imageUrl);
+	// Same public bucket and region used by web-pipeline/lib/normalizeAssetUrl.ts.
+	if (!imageUrl && imageRef?.startsWith("s3://livinit-storage-prod/")) {
+		const source = new URL(imageRef);
+		imageUrl = httpUrl(
+			`https://livinit-storage-prod.s3.us-east-2.amazonaws.com${source.pathname.replace(/\+/g, "%2B")}${source.search}`,
+		);
+	}
 	return {
 		...product,
-		imageUrl: httpUrl(product.imageUrl),
-		imageRef: catalogImageRef(product.imageRef) ?? catalogImageRef(product.imageUrl),
+		imageUrl,
+		imageRef,
 		productUrl: httpUrl(product.productUrl),
 	};
 }
@@ -328,7 +334,6 @@ export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAc
 					limit: normalized.limit,
 					offset: normalized.offset,
 					nextOffset: normalized.offset + page.length,
-					excludeIds: normalized.omitIds,
 					exhausted: normalized.offset + page.length >= matches.length,
 				},
 			};
@@ -562,8 +567,8 @@ export function mergeCatalogFollowUp(
 		return {
 			request: {
 				...base,
-				omitIds: [...new Set([...prior.shownIds, ...(prior.pagination.excludeIds ?? [])])],
-				offset: 0,
+				omitIds: [...prior.shownIds],
+				offset: prior.pagination.offset,
 				limit: prior.pagination.limit,
 			},
 			searchId: prior.searchId,

@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import { GenerateContentResponse } from "@google/genai";
-import { type CatalogProduct, normalizeCatalogSearchRequest } from "@livi/decorator-agent";
+import { CatalogError } from "@livi/decorator-agent";
 import { Client, Pool } from "pg";
-import { type CatalogModels, createCatalogModels, validateCatalogAssessments } from "../src/catalog-models.ts";
-import { createPostgresCatalogAccess, type DesignAssetRegistryRow, mapRegistryRow } from "../src/catalog-postgres.ts";
+import { createCatalogModels } from "../src/catalog-models.ts";
+import { createPostgresCatalogAccess, type DesignAssetRegistryRow } from "../src/catalog-postgres.ts";
 
-function row(id: number, prefix = "Product"): DesignAssetRegistryRow {
+const embedding = [1, ...Array<number>(767).fill(0)];
+
+function row(id: number): DesignAssetRegistryRow {
 	return {
-		asset_id: `${prefix}-${id}`,
-		name: `${prefix} ${id}`,
+		asset_id: `Product-${id}`,
+		name: `Product ${id}`,
 		category: "sectional",
 		description: "A cozy sectional",
 		asset_description: null,
@@ -18,7 +19,7 @@ function row(id: number, prefix = "Product"): DesignAssetRegistryRow {
 		shape: "L-shaped",
 		style: "modern",
 		materials: "velvet",
-		price: null,
+		price: 499.99,
 		width: 2,
 		depth: 1,
 		height: 1,
@@ -26,162 +27,170 @@ function row(id: number, prefix = "Product"): DesignAssetRegistryRow {
 		product_url: null,
 	};
 }
-const accept: CatalogModels["validateCandidates"] = async (products) =>
-	products.map((p) => ({
-		catalogId: p.catalogId,
-		matches: true,
-		score: 50,
-		evidence: [{ field: "name", quote: p.name }],
-	}));
 
-function fixture(indexed: DesignAssetRegistryRow[], unindexed: DesignAssetRegistryRow[] = []) {
-	const sql: string[] = [];
+function fixture(rows: DesignAssetRegistryRow[]) {
+	const sql: { text: string; values: unknown[] }[] = [];
 	const pool = new Pool();
 	const client = Object.assign(new Client(), { release: () => {} });
 	mock.method(pool, "connect", async () => client);
 	mock.method(client, "query", async (query: string | { text: string; values: unknown[] }) => {
 		if (typeof query === "string") return { rows: [] };
-		sql.push(query.text);
+		sql.push(query);
 		const excluded = query.values.filter((value): value is string[] => Array.isArray(value)).flat();
-		const source = query.text.includes("NOT EXISTS") ? unindexed : indexed;
-		return { rows: source.filter((r) => !excluded.includes(String(r.asset_id))).slice(0, 81) };
+		const limit = Number(query.values.at(-2));
+		const offset = Number(query.values.at(-1));
+		return { rows: rows.filter((r) => !excluded.includes(String(r.asset_id))).slice(offset, offset + limit) };
 	});
-	return { pool, sql };
+	return { pool, sql, client };
 }
 
-test("validator sees all 80 candidates before selecting eight; rejected batches advance", async () => {
-	const { pool } = fixture(Array.from({ length: 81 }, (_, i) => row(i)));
-	let examined = 0;
+test("vector retrieval preserves database similarity order and requests only eight plus a probe", async () => {
+	const rows = [row(79), ...Array.from({ length: 79 }, (_, i) => row(i))];
+	const { pool, sql } = fixture(rows);
+	let queries = 0;
 	const access = createPostgresCatalogAccess(pool, {
 		models: {
-			embedQuery: async () => {
-				throw new Error("Category retrieval must bypass embedding");
-			},
-			validateCandidates: async (products) => {
-				examined = products.length;
-				return (await accept(products, normalizeCatalogSearchRequest({}))).map((v) => ({
-					...v,
-					matches: v.catalogId === "Product-80",
-				}));
+			embedQuery: async (query) => {
+				queries++;
+				assert.equal(query, "yellow sectional");
+				return embedding;
 			},
 		},
 	});
-	const first = await access.search({ category: "sectional", query: "yellow", purpose: "replacement" });
-	assert.equal(examined, 80);
-	assert.equal(first.products.length, 0);
-	assert.equal(first.pagination.exhausted, false);
-	assert.equal(first.pagination.excludeIds?.length, 80);
-	const next = await access.search({
-		category: "sectional",
-		query: "yellow",
-		purpose: "replacement",
-		excludeIds: first.pagination.excludeIds,
-	});
-	assert.equal(next.products[0]?.catalogId, "Product-80");
-	assert.equal(next.pagination.exhausted, true);
-});
-
-test("broad offset80 keeps unindexed candidates and category boundary reports nextOffset", async () => {
-	const { pool, sql } = fixture(
-		Array.from({ length: 81 }, (_, i) => row(i, "A")),
-		Array.from({ length: 80 }, (_, i) => row(i, "B")),
+	const first = await access.search({ query: "yellow sectional", category: "sectional" });
+	assert.equal(queries, 1);
+	assert.equal(sql.length, 1);
+	assert.deepEqual(sql[0]?.values.slice(-2), [9, 0]);
+	assert.deepEqual(
+		first.products.map((p) => p.catalogId),
+		rows.slice(0, 8).map((r) => r.asset_id),
 	);
-	const access = createPostgresCatalogAccess(pool, {
-		models: { embedQuery: async () => [1, ...Array<number>(767).fill(0)], validateCandidates: accept },
-	});
-	const broad = await access.search({ query: "cozy", offset: 80 });
-	assert.equal(broad.products.length, 8);
-	assert.ok(broad.products.every((p) => p.catalogId.startsWith("B")));
-	assert.equal(broad.pagination.nextOffset, 88);
-	assert.ok(sql.every((query) => !query.includes("OFFSET")));
-	const boundary = await access.search({ category: "sectional", offset: 78 });
-	assert.equal(boundary.products.length, 2);
-	assert.equal(boundary.pagination.nextOffset, 80);
-	assert.equal(boundary.pagination.exhausted, false);
-	await assert.rejects(access.search({ category: "sectional", offset: 80 }), /show_more/);
+	assert.deepEqual(first.products[0]?.price, { amountMinor: 49999, currency: "USD" });
+	assert.deepEqual(first.retrieval, { strategy: "vector", candidateCount: 9, candidateLimit: 9, truncated: true });
+	assert.deepEqual(first.pagination, { limit: 8, offset: 0, nextOffset: 8, exhausted: false });
 });
 
-test("ranking may choose candidate80; unseen accepted products remain available", async () => {
-	const { pool } = fixture(Array.from({ length: 80 }, (_, i) => row(i)));
-	const access = createPostgresCatalogAccess(pool, {
-		models: {
-			embedQuery: async () => [],
-			validateCandidates: async (products, request) =>
-				(await accept(products, request)).map((v) => ({ ...v, score: v.catalogId === "Product-79" ? 100 : 50 })),
-		},
-	});
-	const first = await access.search({ category: "sectional" });
-	assert.equal(first.products.length, 8);
-	assert.equal(first.products[0]?.catalogId, "Product-79");
-	assert.deepEqual(first.pagination.excludeIds, []);
-	const second = await access.search({ category: "sectional", excludeIds: first.products.map((p) => p.catalogId) });
-	assert.equal(second.products.length, 8);
-	assert.ok(second.products.every((p) => !first.products.some((prior) => p.catalogId === prior.catalogId)));
+test("vector pagination crosses eighty and exclusion continuation preserves an initial offset", async () => {
+	const { pool } = fixture(Array.from({ length: 101 }, (_, i) => row(i)));
+	const access = createPostgresCatalogAccess(pool, { models: { embedQuery: async () => embedding } });
+	const boundary = await access.search({ query: "sofa", offset: 78 });
+	assert.deepEqual(
+		boundary.products.map((p) => p.catalogId),
+		Array.from({ length: 8 }, (_, i) => `Product-${78 + i}`),
+	);
+	assert.equal(boundary.pagination.nextOffset, 86);
+	const tail = await access.search({ query: "sofa", offset: 96 });
+	assert.equal(tail.products.length, 5);
+	assert.equal(tail.pagination.exhausted, true);
+	const shown: string[] = [];
+	let exhausted = false;
+	while (!exhausted) {
+		const page = await access.search({ query: "sofa", offset: 2, omitIds: shown });
+		shown.push(...page.products.map((p) => p.catalogId));
+		exhausted = page.pagination.exhausted;
+		assert.ok(shown.length <= 99);
+	}
+	assert.deepEqual(
+		shown,
+		Array.from({ length: 99 }, (_, i) => `Product-${i + 2}`),
+	);
+	assert.equal(new Set(shown).size, 99);
 });
 
-test("malformed, fabricated, omitted and duplicate model verdicts fail instead of returning empty", async () => {
-	const product = mapRegistryRow(row(1))!;
-	const valid = (await accept([product], normalizeCatalogSearchRequest({})))[0]!;
-	for (const verdicts of [
-		null,
-		[],
-		[valid, valid],
-		[{ ...valid, catalogId: "invented" }],
-		[{ ...valid, score: Number.NaN }],
-		[{ ...valid, evidence: [{ field: "color", quote: "Yellow" }] }],
-		[{ ...valid, evidence: [] }],
-	])
-		assert.throws(() => validateCatalogAssessments(verdicts, [product]), /model_failed/);
-	const { pool } = fixture([row(1)]);
+test("embedding query falls back to original text or structured attributes; empty requests fail before SQL", async () => {
+	const { pool, sql } = fixture([]);
+	const queries: string[] = [];
 	const access = createPostgresCatalogAccess(pool, {
 		models: {
-			embedQuery: async () => [],
-			validateCandidates: async () => {
-				throw new Error("secret provider payload");
+			embedQuery: async (query) => {
+				queries.push(query);
+				return embedding;
 			},
 		},
 	});
-	await assert.rejects(
-		access.search({ category: "sectional" }),
-		(error: unknown) =>
-			error instanceof Error && /model_failed/.test(error.message) && !error.message.includes("secret"),
-	);
+	await access.search({ originalQuery: "a comfortable sofa" });
+	await access.search({ color: "yellow", style: "modern", material: "velvet", category: "sofa" });
+	assert.deepEqual(queries, ["a comfortable sofa", "yellow modern velvet sofa"]);
+	assert.equal(sql.length, 2);
+	await assert.rejects(access.search({}), /invalid_arguments/);
+	assert.equal(sql.length, 2);
 });
 
-test("Google adapter sends bounded synthetic facts, exact embedding prefix and propagates cancellation", async () => {
-	const product: CatalogProduct = mapRegistryRow(row(1))!;
-	const verdicts = await accept([product], normalizeCatalogSearchRequest({}));
-	let validated = false;
+test("Google embedding adapter uses pipeline configuration and forwards cancellation", async () => {
+	let calls = 0;
+	const controller = new AbortController();
 	const models = createCatalogModels({
 		client: {
 			embedContent: async (args) => {
+				calls++;
 				assert.equal(args.model, "gemini-embedding-2-preview");
 				assert.equal(args.contents, "task: search result | query: cozy");
 				assert.equal(args.config?.outputDimensionality, 768);
-				return { embeddings: [{ values: [1, ...Array<number>(767).fill(0)] }] };
-			},
-			generateContent: async (args) => {
-				validated = true;
-				assert.match(String(args.contents), /originalQuery/);
-				assert.doesNotMatch(String(args.contents), /imageUrl|productUrl/);
-				const response = new GenerateContentResponse();
-				response.candidates = [{ content: { parts: [{ text: JSON.stringify(verdicts) }] } }];
-				return response;
+				assert.ok(args.config?.abortSignal);
+				return { embeddings: [{ values: embedding }] };
 			},
 		},
 	});
-	assert.equal((await models.embedQuery("cozy")).length, 768);
-	assert.deepEqual(
-		await models.validateCandidates([product], normalizeCatalogSearchRequest({ originalQuery: "yellow sectional" })),
-		verdicts,
-	);
-	assert.equal(validated, true);
-	validated = false;
-	const controller = new AbortController();
+	assert.deepEqual(await models.embedQuery("cozy", controller.signal), embedding);
 	controller.abort();
-	await assert.rejects(
-		models.validateCandidates([product], normalizeCatalogSearchRequest({}), controller.signal),
-		/cancelled/,
+	await assert.rejects(models.embedQuery("cozy", controller.signal), /cancelled/);
+	assert.equal(calls, 1);
+});
+
+test("invalid embedding responses and provider failures never become empty search results", async () => {
+	for (const values of [[], [1, 2], Array<number>(768).fill(0), [Number.NaN, ...embedding.slice(1)]]) {
+		const models = createCatalogModels({ client: { embedContent: async () => ({ embeddings: [{ values }] }) } });
+		await assert.rejects(models.embedQuery("sofa"), /model_failed/);
+	}
+	const models = createCatalogModels({
+		client: {
+			embedContent: async () => {
+				throw Object.assign(new Error("private-provider-marker"), { status: 429 });
+			},
+		},
+	});
+	await assert.rejects(models.embedQuery("sofa"), (error: unknown) => {
+		assert.ok(error instanceof CatalogError);
+		assert.equal(error.code, "model_failed");
+		assert.deepEqual(error.diagnostic, { stage: "embed", backendCode: "HTTP_429" });
+		assert.doesNotMatch(error.message, /private-/);
+		return true;
+	});
+});
+
+test("debug logs time embedding and retrieval without product facts, queries, or validation stages", async () => {
+	const { pool, client } = fixture([row(1)]);
+	const events: { event: string; fields: Record<string, unknown> }[] = [];
+	const access = createPostgresCatalogAccess(pool, {
+		onDebug: (event, fields) => events.push({ event, fields }),
+		models: { embedQuery: async () => embedding },
+	});
+	await access.search({ query: "private-query-marker" });
+	assert.deepEqual(
+		events.filter(({ event }) => event === "catalog.stage.complete").map(({ fields }) => fields.stage),
+		["embed", "retrieve"],
 	);
-	assert.equal(validated, false);
+	assert.equal(new Set(events.map(({ fields }) => fields.requestId)).size, 1);
+	assert.doesNotMatch(JSON.stringify(events), /private-|validate|validationCount/);
+	mock.method(client, "query", async () => {
+		throw Object.assign(new Error("private-db-marker"), { code: "57014" });
+	});
+	await assert.rejects(access.search({ query: "private-query-marker" }), /timeout/);
+	const failure = events.find(({ event }) => event === "catalog.stage.error")!;
+	assert.equal(failure.fields.stage, "retrieve");
+	assert.equal(failure.fields.errorCode, "timeout");
+	assert.equal(typeof failure.fields.durationMs, "number");
+	assert.doesNotMatch(JSON.stringify(events), /private-/);
+	const { pool: healthy } = fixture([row(1)]);
+	assert.equal(
+		(
+			await createPostgresCatalogAccess(healthy, {
+				onDebug: () => {
+					throw new Error("broken sink");
+				},
+				models: { embedQuery: async () => embedding },
+			}).search({ category: "sectional" })
+		).products.length,
+		1,
+	);
 });

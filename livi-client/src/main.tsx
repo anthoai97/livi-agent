@@ -14,6 +14,7 @@ import {
 	StudioSession,
 	type StudioSessionState,
 	type StudioSummary,
+	sanitizeCatalogProduct,
 	Transcript,
 	type TranscriptState,
 } from "@livi/decorator-agent/contracts";
@@ -556,7 +557,7 @@ function CatalogCards({ details }: { details: CatalogRecommendationDetails }) {
 	return (
 		<ul className="catalog-results" aria-label="Catalog recommendations">
 			{details.products.map((product, index) => (
-				<CatalogCard key={product.catalogId} product={product} recommended={index === 0} />
+				<CatalogCard key={product.catalogId} product={sanitizeCatalogProduct(product)} recommended={index === 0} />
 			))}
 		</ul>
 	);

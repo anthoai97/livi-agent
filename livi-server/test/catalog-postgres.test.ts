@@ -21,13 +21,6 @@ import { startLiviServer } from "../src/server.ts";
 const execFileAsync = promisify(execFile);
 const models: CatalogModels = {
 	embedQuery: async () => [1, ...Array<number>(767).fill(0)],
-	validateCandidates: async (products) =>
-		products.map((product) => ({
-			catalogId: product.catalogId,
-			matches: true,
-			score: 50,
-			evidence: [{ field: "name", quote: product.name }],
-		})),
 };
 
 test("mapRegistryRow treats missing price and dimensions as unknown and keeps non-http image identity", () => {
@@ -128,8 +121,21 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 	});
 	assert.equal(httpsImage?.imageUrl, "https://cdn.example/sofa.jpg");
 	assert.equal(httpsImage?.imageRef, "https://cdn.example/sofa.jpg");
-	assert.equal(httpsImage?.price, null);
+	assert.deepEqual(httpsImage?.price, { amountMinor: 19900, currency: "USD" });
 	assert.deepEqual(httpsImage?.dimensions, { width: 2.1, depth: 1.1, height: 0.8, unit: "m" });
+	for (const [raw, expected] of [
+		["499.99", 49999],
+		[499.99, 49999],
+		[null, null],
+		[-1, null],
+		[Number.NaN, null],
+		[Infinity, null],
+	] as const) {
+		const mapped = mapRegistryRow({ asset_id: "sofa", name: "Sofa", price: raw } as Parameters<
+			typeof mapRegistryRow
+		>[0]);
+		assert.deepEqual(mapped?.price, expected === null ? null : { amountMinor: expected, currency: "USD" });
+	}
 });
 
 test("mapRegistryRow drops temporary signed URLs and keeps stable s3 refs", () => {
@@ -198,7 +204,9 @@ test("mapRegistryRow drops temporary signed URLs and keeps stable s3 refs", () =
 });
 
 test("search SQL parameterizes filters and excludes decor and deleted rows", () => {
-	const compiled = searchSql(normalizeCatalogSearchRequest({ color: "yellow", category: "sectional", limit: 5 }));
+	const compiled = searchSql(normalizeCatalogSearchRequest({ color: "yellow", category: "sectional", limit: 5 }), {
+		embedding: [1],
+	});
 	assert.match(compiled.text, /pipeline\.design_asset_registry/);
 	assert.match(compiled.text, /COALESCE\(is_decor_item, false\) = false/);
 	assert.match(compiled.text, /COALESCE\(is_deleted, false\) = false/);
@@ -209,8 +217,15 @@ test("search SQL parameterizes filters and excludes decor and deleted rows", () 
 	assert.match(compiled.text, /\$2/);
 	const exclusive = searchSql(
 		normalizeCatalogSearchRequest({ category: "desk", maxWidth: 1.2, exclusiveMaxWidth: true }),
+		{ embedding: [1] },
 	);
 	assert.match(exclusive.text, /width < \$/);
+	assert.match(compiled.text, /JOIN.*asset_embeddings/);
+	assert.match(compiled.text, /embedding IS NOT NULL/);
+	assert.match(compiled.text, /<=>.*ASC/);
+	assert.match(compiled.text, /LIMIT \$\d+ OFFSET \$\d+/);
+	assert.deepEqual(compiled.values.slice(-2), [6, 0]);
+	assert.doesNotMatch(compiled.text, /NOT EXISTS|concat_ws|name ASC/);
 });
 
 test("malformed catalog URLs fail closed and local pools do not use TLS", async () => {
@@ -259,7 +274,7 @@ test("server.close ends the catalog pool after a configured URL", async (t) => {
 	await server.close();
 });
 
-test("price bounds against the registry source are unsupported without a verified currency", async () => {
+test("price bounds reject currencies other than the USD catalog default", async () => {
 	const pool = createCatalogPool(parseCatalogDatabaseUrl("postgres://127.0.0.1:1/db"));
 	try {
 		const catalog = createPostgresCatalogAccess(pool);
@@ -267,12 +282,10 @@ test("price bounds against the registry source are unsupported without a verifie
 			catalog.search({
 				color: "yellow",
 				category: "sectional",
-				maxPrice: { amountMinor: 50000, currency: "USD" },
+				maxPrice: { amountMinor: 50000, currency: "EUR" },
 			}),
 			(error: unknown) =>
-				error instanceof CatalogError &&
-				error.code === "unsupported_filter" &&
-				/verified matching currency/i.test(error.message),
+				error instanceof CatalogError && error.code === "unsupported_filter" && /USD/i.test(error.message),
 		);
 	} finally {
 		await pool.end();
@@ -280,7 +293,7 @@ test("price bounds against the registry source are unsupported without a verifie
 });
 
 test(
-	"postgres adapter searches a representative registry through a restricted read role",
+	"postgres metadata hydration and restricted read permissions work without pgvector",
 	{ timeout: 60_000 },
 	async (t) => {
 		const cluster = await startDisposablePostgres();
@@ -293,60 +306,14 @@ test(
 		const readPool = createCatalogPool(parseCatalogDatabaseUrl(cluster.readUrl));
 		t.after(() => readPool.end());
 		const access = createPostgresCatalogAccess(readPool, { models });
-		const found = await access.search({ color: "yellow", category: "sectional" });
-		assert.deepEqual(
-			found.products.map((product) => product.catalogId).sort(),
-			[
-				"11111111-1111-4111-8111-111111111111",
-				"22222222-2222-4222-8222-222222222222",
-				"33333333-3333-4333-8333-333333333333",
-			].sort(),
-		);
-		assert.equal(
-			found.products.some((product) => product.shape === "L-shaped"),
-			true,
-		);
-		assert.equal(
-			found.products.some((product) => product.catalogId === "44444444-4444-4444-8444-444444444444"),
-			false,
-		);
-		assert.equal(
-			found.products.some((product) => product.catalogId === "55555555-5555-4555-8555-555555555555"),
-			false,
-		);
-		assert.equal(
-			found.products.some((product) => product.catalogId === "66666666-6666-4666-8666-666666666666"),
-			false,
-		);
-		const ranked = await access.search({
-			category: "sectional",
-			query: "Haven",
-			limit: 1,
-			room: { categories: ["sofa"] },
-		});
-		assert.equal(ranked.products[0]?.name, "Haven Yellow Sectional Sofa");
-		assert.equal(ranked.retrieval?.strategy, "category_text");
-		assert.equal(ranked.pagination.exhausted, false);
-		const desks = await access.search({ category: "desk", query: "velvet", purpose: "recommendation" });
-		assert.equal(desks.products.length, 8);
-		assert.equal(desks.products[0]?.name, "Velvet desk");
-		assert.deepEqual(desks.retrieval, {
-			strategy: "category_text",
-			candidateCount: 80,
-			candidateLimit: 80,
-			truncated: true,
-		});
-		const tail = await access.search({ category: "desk", offset: 72 });
-		assert.equal(tail.products.length, 8);
-		assert.equal(tail.pagination.exhausted, false);
-		await assert.rejects(access.search({ category: "desk", offset: 80 }), /bounded candidate batch/);
-		const missing = await access.search({ color: "purple", category: "sectional" });
-		assert.deepEqual(missing.products, []);
 		const detail = await access.getProduct("11111111-1111-4111-8111-111111111111");
 		assert.equal(detail.name, "Haven Yellow Sectional Sofa");
 		assert.equal(detail.imageUrl, null);
 		assert.equal(detail.imageRef, "s3://bucket/haven.png");
 		assert.equal(detail.price, null);
+		const priced = await access.getProduct("33333333-3333-4333-8333-333333333333");
+		assert.deepEqual(priced.price, { amountMinor: 120000, currency: "USD" });
+		assert.equal(priced.imageUrl, "https://cdn.example/bend.jpg");
 		await assert.rejects(access.getProduct("99999999-9999-4999-8999-999999999999"), /not_found/);
 		await assert.rejects(
 			readPool.query("INSERT INTO pipeline.pipeline_assets (asset_id, name) VALUES ($1, $2)", [
@@ -561,7 +528,7 @@ FROM generate_series(1,85) AS n`);
 }
 
 test(
-	"pgvector hydrates registry facts and supplements products missing from the index",
+	"pgvector filters and hydrates indexed products without supplementing unindexed rows",
 	{ timeout: 60_000 },
 	async (t) => {
 		const cluster = await startDisposablePostgres();
@@ -602,14 +569,36 @@ test(
 			query: "yellow",
 			room: { categories: ["sofa"] },
 		});
-		assert.equal(calls, 0);
-		assert.equal(scoped.retrieval?.strategy, "category_text");
-		const broad = await access.search({ query: "yellow sectional", color: "yellow" });
 		assert.equal(calls, 1);
-		assert.equal(broad.retrieval?.strategy, "vector_text");
-		assert.ok(broad.retrieval?.unindexedCount);
-		assert.ok(broad.products.some((p) => p.shape === "L-shaped"));
-		assert.ok(broad.products.some((p) => p.catalogId === "11111111-1111-4111-8111-111111111111"));
+		assert.equal(scoped.retrieval?.strategy, "vector");
+		assert.deepEqual(
+			scoped.products.map((p) => p.catalogId),
+			["11111111-1111-4111-8111-111111111111"],
+		);
+		const broad = await access.search({ query: "yellow sectional", color: "yellow" });
+		assert.equal(calls, 2);
+		assert.equal(broad.retrieval?.strategy, "vector");
+		assert.equal(broad.products.length, 1);
+		const missing = await access.search({ color: "purple", category: "sectional" });
+		assert.deepEqual(missing.products, []);
+		await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, $2::vector)", [
+			"33333333-3333-4333-8333-333333333333",
+			JSON.stringify(embedding),
+		]);
+		const priced = await access.search({
+			category: "sectional",
+			minPrice: { amountMinor: 120000, currency: "USD" },
+			maxPrice: { amountMinor: 120000, currency: "USD" },
+		});
+		assert.deepEqual(
+			priced.products.map((p) => p.name),
+			["Bend Yellow L-Shaped Sectional"],
+		);
+		assert.deepEqual(priced.products[0]?.price, { amountMinor: 120000, currency: "USD" });
+		assert.deepEqual(
+			(await access.search({ category: "sectional", maxPrice: { amountMinor: 119999, currency: "USD" } })).products,
+			[],
+		);
 	},
 );
 

@@ -19,7 +19,7 @@ export type {
 	CatalogSearchResult,
 	CatalogTarget,
 } from "./catalog.ts";
-export { CATALOG_RECOMMENDATION_KIND, isCatalogRecommendationDetails } from "./catalog.ts";
+export { CATALOG_RECOMMENDATION_KIND, isCatalogRecommendationDetails, sanitizeCatalogProduct } from "./catalog.ts";
 export * from "./services/agent-controller.ts";
 export * from "./services/sessions.ts";
 export * from "./services/studio.ts";
