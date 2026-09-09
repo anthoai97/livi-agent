@@ -1,0 +1,13 @@
+{
+  "source": "f0fee311-38cf-4b66-b11b-e21b76134c9d.json",
+  "defaultCurrency": "USD",
+  "budget": null,
+  "objects": {
+    "rugs_1": {"catalogId": "f1487037-476a-4514-a7a7-4935d60f3537", "price": {"amountMinor": 189900, "currency": "USD"}},
+    "chair_42": {"catalogId": "faac738c-c6cf-4856-9785-32449cb791b8", "price": {"amountMinor": 29900, "currency": "USD"}},
+    "sofa_238": {"catalogId": "d5c467c3-d702-4f6a-9261-1d904023040a", "price": {"amountMinor": 540000, "currency": "USD"}},
+    "bookcase_102": {"catalogId": "5bd686ec-bc69-451e-b270-4d8b46e0e274", "price": {"amountMinor": 169900, "currency": "USD"}},
+    "floor_lamps_50": {"catalogId": "eb3d5830-3def-416b-93c6-b4d411a4b329", "price": {"amountMinor": 39900, "currency": "USD"}},
+    "coffee_table_1727": {"catalogId": "5d995357-b003-406a-a1bf-abf0081eb0f2", "price": {"amountMinor": 125000, "currency": "USD"}}
+  }
+}

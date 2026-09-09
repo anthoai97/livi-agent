@@ -1,0 +1,178 @@
+{
+  "workspace_id": "16c9fe67-cc6b-4ab3-a6ef-99251bae03fb",
+  "room_id": "485432fc-5df0-443b-a237-20657e336702",
+  "design_id": "f0fee311-38cf-4b66-b11b-e21b76134c9d",
+  "revision": 2,
+  "state": {
+    "schema_version": "studio-design.v2",
+    "room": {
+      "room_id": "485432fc-5df0-443b-a237-20657e336702",
+      "geometry": {
+        "room_area": [5.486400000000001, 5.7912],
+        "room_vertices": [[0, 0], [5.486400000000001, 0], [5.486400000000001, 5.7912], [0, 5.7912]],
+        "wall_height": 2.7432000000000003,
+        "room_doors": [{"id": "tpl-door-lr-neutral-standard", "surface_key": "back", "center": [1.5361920000000002, 5.7912], "width": 0.9, "depth": 0.05, "height": 2.08}],
+        "room_windows": [{"id": "tpl-win-lr-neutral-standard", "surface_key": "back", "center": [3.9502080000000004, 5.7912], "width": 1.1, "depth": 0.05, "height": 1.2, "sill_height": 0.9}]
+      }
+    },
+    "entities": {
+      "rugs_1": {
+        "asset_id": "f1487037-476a-4514-a7a7-4935d60f3537",
+        "asset_snapshot": {
+          "asset_id": "f1487037-476a-4514-a7a7-4935d60f3537",
+          "name": "rugs_1",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/rugs_1.glb",
+          "width": 2.4384,
+          "depth": 3.048,
+          "height": 0.0076,
+          "materials": ["wool", "viscose"],
+          "available_colors": [],
+          "category": "rug",
+          "image_ref": "https://assets.livinit.ai/asset_image/rugs_1/rugs_1_1.jpg",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/rugs_1.png",
+          "product_url": "https://www.cb2.com/adelle-hand-knotted-light-brown-wool-and-cotton-area-rug-8x10/s441641",
+          "price_amount": "1899",
+          "description": "An area rug designed to add texture and comfort to a living or bedroom floor.",
+          "company_name": "CB2",
+          "style": "modern",
+          "center": [0, 0, 0.0038],
+          "front_view": 0
+        },
+        "transform": {"position": [2.5, 2.895, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "material": {"materials": ["wool", "viscose"], "color": "beige"}
+      },
+      "chair_42": {
+        "asset_id": "faac738c-c6cf-4856-9785-32449cb791b8",
+        "asset_snapshot": {
+          "asset_id": "faac738c-c6cf-4856-9785-32449cb791b8",
+          "name": "chair_42",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/chair_42.glb",
+          "width": 0.6096,
+          "depth": 0.6096,
+          "height": 0.8128,
+          "materials": ["fabric", "foam", "wood"],
+          "available_colors": ["Sand Ivory, Performance Fabric", "Welsh Green, Performance Fabric", "Sand Ivory", "Welsh Green"],
+          "category": "chair",
+          "image_ref": "https://assets.livinit.ai/asset_image/catalog/faac738c-c6cf-4856-9785-32449cb791b8/primary.jpg",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/chair_42.png",
+          "product_url": "https://www.article.com/product/24450/rosin-dining-armchair-natural-oak-and-sand-ivory",
+          "price_amount": "299",
+          "description": "A comfortable armchair designed for dining or as an accent piece in a living space.",
+          "company_name": "Article",
+          "style": "modern",
+          "center": [0, 0.0002, 0],
+          "front_view": 0
+        },
+        "transform": {"position": [3.8, 2.895, 0], "rotation": [0, 0, 3.141592653589793], "scale": [1, 1, 1]},
+        "material": {"materials": ["fabric", "foam", "wood"], "color": "Sand Ivory and Oak"}
+      },
+      "sofa_238": {
+        "asset_id": "d5c467c3-d702-4f6a-9261-1d904023040a",
+        "asset_snapshot": {
+          "asset_id": "d5c467c3-d702-4f6a-9261-1d904023040a",
+          "name": "sofa_238",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/sofa_238.glb",
+          "width": 2.1336,
+          "depth": 0.9906,
+          "height": 0.889,
+          "materials": ["bouclé fabric", "wood", "foam"],
+          "available_colors": ["Plush Linen"],
+          "category": "sofa",
+          "image_ref": "https://assets.livinit.ai/asset_image/catalog/d5c467c3-d702-4f6a-9261-1d904023040a/primary.webp",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/sofa_238.png",
+          "product_url": "https://www.arhaus.com/products/kipton-sleeper-sofa",
+          "price_amount": "5400",
+          "description": "A comfortable two-seater sofa designed for relaxing in a living room or lounge area.",
+          "company_name": "Arhaus",
+          "style": "modern minimalist",
+          "center": [0, 0.0017, -0.0006],
+          "front_view": 0
+        },
+        "transform": {"position": [0.6, 2.895, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "material": {"materials": ["bouclé fabric", "wood", "foam"], "color": "Plush Linen"}
+      },
+      "bookcase_102": {
+        "asset_id": "5bd686ec-bc69-451e-b270-4d8b46e0e274",
+        "asset_snapshot": {
+          "asset_id": "5bd686ec-bc69-451e-b270-4d8b46e0e274",
+          "name": "bookcase_102",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/bookcase_102.glb",
+          "width": 1.9558,
+          "depth": 0.4064,
+          "height": 1.905,
+          "materials": ["wood"],
+          "available_colors": ["Walnut", "White Oak"],
+          "category": "bookcase",
+          "image_ref": "https://assets.livinit.ai/asset_image/catalog/5bd686ec-bc69-451e-b270-4d8b46e0e274/primary.jpg",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/bookcase_102.png",
+          "product_url": "https://www.article.com/product/27554/zander-75-shelving-unit-white-oak",
+          "price_amount": "1699",
+          "description": "A spacious and open five-tier shelving unit designed for displaying books and decorative accents.",
+          "company_name": "Article",
+          "style": "minimalist",
+          "center": [-0.0002, 0.0061, -0.0007],
+          "front_view": 0
+        },
+        "transform": {"position": [5.28, 2.895, 0], "rotation": [0, 0, 3.141592653589793], "scale": [1, 1, 1]},
+        "material": {"materials": ["wood"], "color": "White Oak"}
+      },
+      "floor_lamps_50": {
+        "asset_id": "eb3d5830-3def-416b-93c6-b4d411a4b329",
+        "asset_snapshot": {
+          "asset_id": "eb3d5830-3def-416b-93c6-b4d411a4b329",
+          "name": "floor_lamps_50",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/floor_lamps_50.glb",
+          "width": 0.55372,
+          "depth": 0.55372,
+          "height": 1.55702,
+          "materials": ["fabric", "metal"],
+          "available_colors": ["Natural"],
+          "category": "floor_lamp",
+          "image_ref": "https://assets.livinit.ai/asset_image/floor_lamps/floor_lamps_50/floor_lamps_50_1.jpg",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/floor_lamps_50.png",
+          "product_url": "https://tovfurniture.com/products/graham-natural-jute-floor-lamp",
+          "price_amount": "399",
+          "description": "A floor lamp that provides ambient lighting.",
+          "company_name": "TOV Furniture",
+          "style": "modern",
+          "center": [0, 0.0001, 0],
+          "front_view": 0
+        },
+        "transform": {"position": [0.275, 1.17, 0], "rotation": [0, 0, 1.5707963267948966], "scale": [1, 1, 1]},
+        "material": {"materials": ["fabric", "metal"], "color": "Natural"}
+      },
+      "coffee_table_1727": {
+        "asset_id": "5d995357-b003-406a-a1bf-abf0081eb0f2",
+        "asset_snapshot": {
+          "asset_id": "5d995357-b003-406a-a1bf-abf0081eb0f2",
+          "name": "coffee_table_1727",
+          "model_ref": "https://assets.livinit.ai/3d-assets-optimized/models/coffee_table_1727.glb",
+          "width": 1.1989,
+          "depth": 1.199,
+          "height": 0.3658,
+          "materials": ["wood"],
+          "available_colors": [],
+          "category": "coffee_table",
+          "image_ref": "https://assets.livinit.ai/asset_image/catalog/5d995357-b003-406a-a1bf-abf0081eb0f2/primary.webp",
+          "topdown_ref": "https://assets.livinit.ai/asset-topdown/coffee_table_1727.png",
+          "product_url": "https://www.casagear.com/products/cid-nysa-48-inch-coffee-table-square-brown-solid-rubberwood-4-oval-legs-by-casagear-home",
+          "price_amount": "1250",
+          "description": "A square coffee table designed to serve as a focal point in a living room seating area.",
+          "company_name": "Casagear Home",
+          "style": "modern minimalist",
+          "center": [0, 0.0002, 0.0003],
+          "front_view": 0
+        },
+        "transform": {"position": [2.3, 2.895, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "material": {"materials": ["wood"], "color": "light oak"}
+      }
+    },
+    "surface_finishes": {
+      "back": {"kind": "paint", "label": "Paint #f1efea", "color": "#f1efea"},
+      "left": {"kind": "paint", "label": "Paint #f1efea", "color": "#f1efea"},
+      "front": {"kind": "paint", "label": "Paint #f1efea", "color": "#f1efea"},
+      "right": {"kind": "paint", "label": "Paint #f1efea", "color": "#f1efea"}
+    },
+    "studio_state": {"schema_version": 1}
+  }
+}
