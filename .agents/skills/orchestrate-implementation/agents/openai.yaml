@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Implementation"
+  short_description: "Run implementation agents in Herdr with clear ownership"
+  default_prompt: "Use $orchestrate-implementation to spin up an implementation agent in Herdr while the root inspects integration points and coordinates validation."
