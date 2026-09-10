@@ -373,7 +373,7 @@ test(
 					request.systemPrompt?.includes(JSON.stringify(action)),
 					"SQLite recovery must retain wire selection",
 				);
-				assert.ok(request.systemPrompt?.includes("Current request mutation block: true"));
+				assert.ok(request.systemPrompt?.includes("Interrupted-request replay blocked: true"));
 				return fauxAssistantMessage("Recovered room design");
 			},
 		]);
