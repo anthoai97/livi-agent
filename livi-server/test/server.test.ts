@@ -98,7 +98,7 @@ test(
 		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-server-"));
 		const faux = fauxProvider({
 			provider: "google",
-			models: [{ id: "gemini-3.5-flash-lite" }],
+			models: [{ id: "gemini-3.8-flash" }],
 			tokensPerSecond: 100,
 			tokenSize: { min: 1, max: 1 },
 		});
@@ -249,7 +249,7 @@ test(
 		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-provider-fields-"));
 		const faux = fauxProvider({
 			provider: "google",
-			models: [{ id: "gemini-3.5-flash-lite" }],
+			models: [{ id: "gemini-3.8-flash" }],
 			tokensPerSecond: 100,
 			tokenSize: { min: 1, max: 1 },
 		});
@@ -364,7 +364,7 @@ test(
 		await exited;
 		await first.client.dispose();
 
-		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 		const models = createModels();
 		models.setProvider(faux.provider);
 		faux.setResponses([

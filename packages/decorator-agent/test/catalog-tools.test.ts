@@ -226,7 +226,7 @@ async function session(
 	const stored = await repo.create({}, context);
 	const faux = fauxProvider({
 		provider: "google",
-		models: [{ id: "gemini-3.5-flash-lite", contextWindow: options.contextWindow }],
+		models: [{ id: "gemini-3.8-flash", contextWindow: options.contextWindow }],
 	});
 	const models = createModels();
 	models.setProvider(faux.provider);

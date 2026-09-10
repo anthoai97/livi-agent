@@ -218,7 +218,7 @@ it("publishes full product details to the UI while feeding bounded text to the m
 	const repo = new MemorySessionRepo();
 	const source = product("product-exact");
 	const session = await repo.create({}, context);
-	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const runtime = await DecoratorSession.create({ session, models, catalog: createMemoryCatalogAccess([source]) });

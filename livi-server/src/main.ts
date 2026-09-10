@@ -4,7 +4,7 @@ const server = await startLiviServer({
 	port: Number(process.env.PORT ?? 3001),
 	host: process.env.HOST ?? "127.0.0.1",
 	dataDirectory: process.env.LIVI_DATA_DIR,
-	modelId: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
+	modelId: process.env.GEMINI_MODEL,
 	apiKey: process.env.GEMINI_API_KEY,
 	debug: process.env.LIVI_DEBUG === "1",
 	studioAllowedOrigins: process.env.STUDIO_ALLOWED_ORIGINS?.split(",")

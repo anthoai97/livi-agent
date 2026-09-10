@@ -195,7 +195,7 @@ async function fixture(onDebug?: (event: string, fields: Record<string, unknown>
 	const stored = await repo.create({}, context);
 	const broker = new StudioBroker({ timeoutMs: 500 });
 	const fake = await adapter(broker, stored);
-	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const errors: Error[] = [];
