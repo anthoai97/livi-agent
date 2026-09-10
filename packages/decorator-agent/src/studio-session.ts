@@ -123,14 +123,14 @@ export class StudioSessionRuntime {
 		if (binding && this.broker) {
 			try {
 				const current = await this.journal.binding(context);
-				if (current?.designId !== binding.designId || current?.tabId !== binding.tabId)
+				if (!sameBinding(current, binding))
 					throw new Error(
 						"wrong_binding: The conversation changed rooms after this request; submit a new request",
 					);
 				snapshot = refreshed?.snapshot ?? (await this.broker.freshContext(binding, active));
 				active.abortSignal?.throwIfAborted();
 				const latest = await this.journal.binding(context);
-				if (latest?.designId !== binding.designId || latest?.tabId !== binding.tabId)
+				if (!sameBinding(latest, binding))
 					throw new Error("wrong_binding: The conversation changed rooms during refresh; submit a new request");
 				unavailable = null;
 			} catch (error) {
@@ -189,7 +189,7 @@ export class StudioSessionRuntime {
 		return this.exclusive(async () => {
 			if (this.shutdown.signal.aborted) throw new Error("Studio session is closed");
 			const binding = await this.journal.binding();
-			if (binding?.designId !== record.command.binding.designId || binding?.tabId !== record.command.binding.tabId)
+			if (!sameBinding(binding, record.command.binding))
 				throw new Error("wrong_binding: The conversation changed rooms after this request; submit a new request");
 			const state = this.broker?.getState(binding);
 			if (state?.phase !== "ready")
@@ -204,4 +204,11 @@ export class StudioSessionRuntime {
 		await this.serial;
 		await this.publishing;
 	}
+}
+
+function sameBinding(
+	left: { designId: string; tabId: string } | null | undefined,
+	right: { designId: string; tabId: string } | null | undefined,
+): boolean {
+	return left?.designId === right?.designId && left?.tabId === right?.tabId;
 }

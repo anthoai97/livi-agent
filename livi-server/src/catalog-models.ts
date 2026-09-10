@@ -9,6 +9,16 @@ export interface CatalogModels {
 	embedQuery(query: string, signal?: AbortSignal): Promise<number[]>;
 }
 
+export function assertCatalogEmbedding(values: number[] | undefined): asserts values is number[] {
+	if (
+		!values ||
+		values.length !== CATALOG_EMBEDDING_DIMENSIONS ||
+		!values.every(Number.isFinite) ||
+		!values.some((value) => value !== 0)
+	)
+		throw new CatalogError("model_failed", "Catalog embedding response is invalid", { stage: "embed" });
+}
+
 export function createCatalogModels(options: {
 	apiKey?: string;
 	client?: Pick<GoogleGenAI["models"], "embedContent">;
@@ -27,13 +37,7 @@ export function createCatalogModels(options: {
 						config: { outputDimensionality: CATALOG_EMBEDDING_DIMENSIONS, abortSignal: active },
 					});
 					const embedding = response.embeddings?.[0]?.values;
-					if (
-						!embedding ||
-						embedding.length !== CATALOG_EMBEDDING_DIMENSIONS ||
-						!embedding.every(Number.isFinite) ||
-						!embedding.some((value) => value !== 0)
-					)
-						throw new CatalogError("model_failed", "Catalog embedding response is invalid", { stage: "embed" });
+					assertCatalogEmbedding(embedding);
 					return embedding;
 				} catch (error) {
 					if (error instanceof CatalogError) throw error;

@@ -132,17 +132,16 @@ export function roomModelContext(planning: StudioPlanningSnapshot | undefined, q
 					? [object.name, object.category].some((label) => label.toLocaleLowerCase().includes(requested))
 					: true,
 		)
-		.map((object) => ({
-			object,
-			rank:
-				object.id === targetId
-					? 3
-					: [object.name, object.category].some((label) => label && requested.includes(label.toLocaleLowerCase()))
-						? 2
-						: selected.has(object.id)
-							? 1
-							: 0,
-		}))
+		.map((object) => {
+			let rank = 0;
+			if (object.id === targetId) rank = 3;
+			else if (
+				[object.name, object.category].some((label) => label && requested.includes(label.toLocaleLowerCase()))
+			)
+				rank = 2;
+			else if (selected.has(object.id)) rank = 1;
+			return { object, rank };
+		})
 		.sort((a, b) => b.rank - a.rank);
 	const offset = query.offset ?? 0;
 	const objects = ranked.slice(offset).map(({ object }) => ({

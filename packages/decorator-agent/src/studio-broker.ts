@@ -73,10 +73,10 @@ export class StudioBroker {
 	}
 	getState(binding: StudioBinding | null): { phase: StudioPhase; snapshot: StudioSnapshot | null } {
 		const connection = binding ? this.connections.get(binding.tabId) : undefined;
+		const matched = connection?.binding.designId === binding?.designId ? connection : undefined;
 		return {
-			phase: connection?.binding.designId === binding?.designId ? (connection?.phase ?? "offline") : "offline",
-			snapshot:
-				connection?.binding.designId === binding?.designId ? structuredClone(connection?.snapshot ?? null) : null,
+			phase: matched?.phase ?? "offline",
+			snapshot: structuredClone(matched?.snapshot ?? null),
 		};
 	}
 	/** A new instance is provided to each physical connection; no caller-supplied identity grants authority. */

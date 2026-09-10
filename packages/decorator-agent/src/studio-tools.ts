@@ -4,9 +4,7 @@ import { type Static, Type } from "typebox";
 import {
 	type CatalogAccess,
 	type CatalogDetailResult,
-	type CatalogDimensionName,
 	CatalogError,
-	type CatalogFollowUp,
 	type CatalogRecommendationDetails,
 	type CatalogSearchPurpose,
 	type CatalogSearchRequest,
@@ -109,8 +107,8 @@ function finiteVector(vector: number[]): asserts vector is StudioVector3 {
 }
 
 function errorCode(error: unknown): string {
-	const code = error instanceof Error ? error.message.split(":", 1)[0] : undefined;
 	if (error instanceof CatalogError) return error.code;
+	const code = error instanceof Error ? error.message.split(":", 1)[0] : undefined;
 	return code &&
 		[
 			"studio_unavailable",
@@ -173,11 +171,12 @@ async function execute(
 				throw new Error(
 					`studio_unavailable: ${planning?.unavailable ?? "Missing original planning evidence; submit a new room request"}`,
 				);
-			const object = planning.snapshot.objects.find((object) => object.id === objectId);
-			if (!object || planning.snapshot.objects.filter((object) => object.id === objectId).length !== 1)
+			const matches = planning.snapshot.objects.filter((object) => object.id === objectId);
+			if (matches.length !== 1)
 				throw new Error(
 					"invalid_target: Use one exact placed object ID from the planning snapshot. Ask which object if selection is ambiguous",
 				);
+			const object = matches[0]!;
 			if (type === "replace" && originalCommandId === undefined) {
 				if (!selection || selection.targetObjectId !== objectId)
 					throw new Error(
@@ -239,11 +238,11 @@ async function execute(
 			let action: StudioAction;
 			if (type === "remove") action = { type };
 			else if (type === "replace") {
-				if (!previousCatalogId && !selection)
-					throw new Error("invalid_target: Select a recommendation or reference a saved replacement");
+				const catalogId = previousCatalogId ?? selection?.selectedProductId;
+				if (!catalogId) throw new Error("invalid_target: Select a recommendation or reference a saved replacement");
 				action = {
 					type,
-					catalogId: previousCatalogId ?? selection!.selectedProductId,
+					catalogId,
 					expectedCatalogId: object.product?.catalogId ?? null,
 				};
 			} else {
@@ -398,7 +397,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 				const hasAmount = args.minAmountMinor !== undefined || args.maxAmountMinor !== undefined;
 				if (!hasAmount && args.currency !== undefined)
 					throw new CatalogError("unsupported_filter", "Supply a price bound when specifying currency");
-				const followUp = args.followUp as CatalogFollowUp | undefined;
+				const followUp = args.followUp;
 				const history = followUp
 					? await loadRecommendationHistory(toolContext.studio.session, context, args.searchId)
 					: [];
@@ -409,7 +408,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 					prior && followUp
 						? mergeCatalogFollowUp(prior, followUp, {
 								referenceCatalogId: args.referenceCatalogId,
-								dimension: args.dimension as CatalogDimensionName | undefined,
+								dimension: args.dimension,
 								room: prior.resolvedConstraints.target
 									? { categories: [prior.resolvedConstraints.target.category] }
 									: room,
@@ -526,23 +525,15 @@ function wrapCatalogError(error: unknown, signal: AbortSignal | undefined): Cata
 	return new CatalogError("query_failed", "Catalog query failed");
 }
 
-function productIds(payload: unknown): string[] {
-	if (!payload || typeof payload !== "object") return [];
-	if ("products" in payload && Array.isArray(payload.products))
-		return payload.products.flatMap((product) =>
-			product && typeof product === "object" && "catalogId" in product && typeof product.catalogId === "string"
-				? [product.catalogId]
-				: [],
-		);
-	if ("product" in payload && payload.product && typeof payload.product === "object" && "catalogId" in payload.product)
-		return typeof payload.product.catalogId === "string" ? [payload.product.catalogId] : [];
-	return [];
+function productIds(payload: CatalogRecommendationDetails | CatalogDetailResult): string[] {
+	return "products" in payload ? payload.products.map((product) => product.catalogId) : [payload.product.catalogId];
 }
 
 function isReplacementRequest(query: string | undefined): boolean {
+	const text = query ?? "";
 	return (
-		/\b(replace|replacement)\b/i.test(query ?? "") ||
-		(/\bswap\b/i.test(query ?? "") && !/\bswap\s+(?:(?:the|their)\s+)?(?:positions?|places?)\b/i.test(query ?? ""))
+		/\b(replace|replacement)\b/i.test(text) ||
+		(/\bswap\b/i.test(text) && !/\bswap\s+(?:(?:the|their)\s+)?(?:positions?|places?)\b/i.test(text))
 	);
 }
 

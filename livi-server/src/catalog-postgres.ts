@@ -16,11 +16,12 @@ import {
 } from "@livi/decorator-agent";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
-import { CATALOG_EMBEDDING_DIMENSIONS, type CatalogModels } from "./catalog-models.js";
+import { assertCatalogEmbedding, type CatalogModels } from "./catalog-models.js";
 
 const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
 	"asset_id, name, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
+const ACTIVE_REGISTRY_ROW = ["COALESCE(is_decor_item, false) = false", "COALESCE(is_deleted, false) = false"] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DesignAssetRegistryRow {
@@ -66,7 +67,7 @@ export function createCatalogPool(url: URL): Pool {
 		statement_timeout: 8_000,
 		query_timeout: 8_000,
 		application_name: "livi-catalog",
-		ssl: catalogTls(url, local),
+		ssl: catalogTls(url, local, pooled),
 		...(pooled ? {} : { options: "-c default_transaction_read_only=on" }),
 	};
 	const pool = new Pool(config);
@@ -76,20 +77,14 @@ export function createCatalogPool(url: URL): Pool {
 	return pool;
 }
 
-function catalogTls(url: URL, local: boolean): PoolConfig["ssl"] {
+function catalogTls(url: URL, local: boolean, pooled: boolean): PoolConfig["ssl"] {
 	if (local) return false;
 	const mode = url.searchParams.get("sslmode");
 	if (mode === "disable") return false;
 	// Hosted poolers often present a chain Node cannot verify with default CAs.
 	// Encrypt the session; require sslmode=verify-full for strict CA checks.
 	if (mode === "verify-full" || mode === "verify-ca") return { rejectUnauthorized: true };
-	if (
-		mode === "require" ||
-		mode === "no-verify" ||
-		url.port === "6543" ||
-		url.hostname.includes("pooler.supabase.com")
-	)
-		return { rejectUnauthorized: false };
+	if (mode === "require" || mode === "no-verify" || pooled) return { rejectUnauthorized: false };
 	return { rejectUnauthorized: true };
 }
 
@@ -153,14 +148,10 @@ export function createPostgresCatalogAccess(
 			});
 			if (!options.models)
 				throw new CatalogError("model_failed", "Catalog embedding model is not configured", { stage: "embed" });
+			const models = options.models;
 			const embedding = await stage("embed", async () => {
-				const vector = await catalogDeadline((active) => options.models!.embedQuery(query, active), signal);
-				if (
-					vector.length !== CATALOG_EMBEDDING_DIMENSIONS ||
-					!vector.every(Number.isFinite) ||
-					!vector.some((v) => v !== 0)
-				)
-					throw new CatalogError("model_failed", "Catalog embedding response is invalid", { stage: "embed" });
+				const vector = await catalogDeadline((active) => models.embedQuery(query, active), signal);
+				assertCatalogEmbedding(vector);
 				return vector;
 			});
 			const { text, values } = searchSql(normalized, { embedding });
@@ -203,8 +194,7 @@ export function createPostgresCatalogAccess(
 				pool,
 				`SELECT ${SELECT_COLUMNS} FROM ${REGISTRY}
 WHERE asset_id = $1::uuid
-  AND COALESCE(is_decor_item, false) = false
-  AND COALESCE(is_deleted, false) = false
+  AND ${ACTIVE_REGISTRY_ROW.join("\n  AND ")}
 LIMIT 1`,
 				[id],
 				signal,
@@ -258,7 +248,7 @@ export function searchSql(
 	values: Array<string | number | string[]>;
 } {
 	const values: Array<string | number | string[]> = [];
-	const where = ["COALESCE(is_decor_item, false) = false", "COALESCE(is_deleted, false) = false"];
+	const where: string[] = [...ACTIVE_REGISTRY_ROW];
 	const add = (value: string | number | string[]) => {
 		values.push(value);
 		return `$${values.length}`;
@@ -307,8 +297,7 @@ function tokenPredicate(column: string, param: string): string {
 function availableColorPredicate(param: string): string {
 	return `EXISTS (
   SELECT 1 FROM unnest(COALESCE(available_colors, ARRAY[]::text[])) AS available(color)
-  WHERE lower(btrim(available.color)) = ${param}
-     OR ${param} = ANY (SELECT tok FROM regexp_split_to_table(lower(available.color), '[^a-z0-9]+') AS tok WHERE tok <> '')
+  WHERE ${tokenPredicate("available.color", param)}
 )`;
 }
 

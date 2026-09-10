@@ -83,20 +83,16 @@ export class DecoratorSession implements RoutedSessionHandle {
 						throw error;
 					}
 				});
-				if (!result.ok)
+				if (!result.ok) {
+					let code = "operation_failed";
+					if (result.error._tag === "LaneBusy") code = "lane_busy";
+					else if (result.error._tag === "InvalidMessage") code = "invalid_message";
 					return {
 						accepted: false,
 						operationId: null,
-						error: {
-							code:
-								result.error._tag === "LaneBusy"
-									? "lane_busy"
-									: result.error._tag === "InvalidMessage"
-										? "invalid_message"
-										: "operation_failed",
-							message: result.error.message,
-						},
+						error: { code, message: result.error.message },
 					};
+				}
 				this.startDrive(result.value.operationId);
 				return { accepted: true, operationId: result.value.operationId, error: null };
 			},
