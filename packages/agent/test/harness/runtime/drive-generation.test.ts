@@ -7,14 +7,16 @@ import {
 	type MutableModels,
 	type Provider,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HarnessEvent, WatchHandle } from "../../../src/harness/agent-harness.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../../src/harness/compaction/compaction.ts";
-import { BACKGROUND_CONTEXT, type Context } from "../../../src/harness/context.ts";
+import { BACKGROUND_CONTEXT, type Context, getAgentHarnessTurnContext } from "../../../src/harness/context.ts";
 import { HookRegistry } from "../../../src/harness/hooks.ts";
 import { runCheckpoint, startRun } from "../../../src/harness/runtime/drive/checkpoint.ts";
 import { runGeneration } from "../../../src/harness/runtime/drive/generation.ts";
 import { recoverAssistantGeneration } from "../../../src/harness/runtime/drive/recovery.ts";
+import { runTools } from "../../../src/harness/runtime/drive/tools.ts";
 import { Lane } from "../../../src/harness/runtime/lane.ts";
 import { restoreLane } from "../../../src/harness/runtime/restore.ts";
 import { type Config, Drive } from "../../../src/harness/runtime/types.ts";
@@ -388,6 +390,71 @@ describe("runtime generation checkpoint", () => {
 });
 
 describe("runtime assistant generation", () => {
+	it("carries turn identity from planning through the tool batch without leaking into the next turn", async () => {
+		const fixture = await createFixture();
+		const seen: Array<ReturnType<typeof getAgentHarnessTurnContext>> = [];
+		fixture.config.toolContext = (context) => {
+			seen.push(getAgentHarnessTurnContext(context));
+			return undefined;
+		};
+		fixture.config.systemPrompt = (_toolContext, context) => {
+			seen.push(getAgentHarnessTurnContext(context));
+			return "test";
+		};
+		fixture.config.tools = [
+			{
+				name: "inspect",
+				label: "Inspect",
+				description: "Inspect",
+				parameters: Type.Object({}),
+				execute: async (_id, _args, _update, _toolContext, invocation, context) => {
+					const turn = getAgentHarnessTurnContext(context);
+					expect(turn).toMatchObject({
+						operationId: invocation.operationId,
+						turnId: invocation.turnId,
+						phase: "tools",
+					});
+					seen.push(turn);
+					return { content: [{ type: "text", text: "done" }], details: undefined };
+				},
+			},
+		];
+		await fixture.lane.setActiveTools(["inspect"], BACKGROUND_CONTEXT);
+		const ready = await advanceToReady(fixture);
+		fixture.faux.setResponses([
+			fauxAssistantMessage(
+				[
+					{ type: "toolCall", id: "first", name: "inspect", arguments: {} },
+					{ type: "toolCall", id: "second", name: "inspect", arguments: {} },
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		await runGeneration(fixture.lane, fixture.drive, ready);
+		const tools = currentRun(fixture.lane);
+		if (tools.at !== "tools") throw new Error("missing tool batch");
+		await runTools(fixture.lane, fixture.drive, tools);
+		const checkpoint = currentRun(fixture.lane);
+		if (checkpoint.at !== "checkpoint") throw new Error("missing checkpoint");
+		await runCheckpoint(fixture.lane, fixture.drive, checkpoint);
+		const next = readyGeneration(fixture.lane);
+		await runGeneration(fixture.lane, fixture.drive, next);
+
+		const firstTurn = { lane: "main", operationId, turnId: ready.generationContext.stepId };
+		expect(seen).toEqual([
+			{ ...firstTurn, phase: "assistant" },
+			{ ...firstTurn, phase: "assistant" },
+			{ ...firstTurn, phase: "tools" },
+			{ ...firstTurn, phase: "tools" },
+			{ ...firstTurn, phase: "tools" },
+			{ ...firstTurn, turnId: next.generationContext.stepId, phase: "assistant" },
+			{ ...firstTurn, turnId: next.generationContext.stepId, phase: "assistant" },
+		]);
+		expect(next.generationContext.stepId).not.toBe(ready.generationContext.stepId);
+		expect(getAgentHarnessTurnContext(fixture.drive.context)).toBeUndefined();
+	});
+
 	it("commits intent before provider admission, preserves queued inbox state, and settles reserved ids", async () => {
 		const fixture = await createFixture();
 		const ready = await advanceToReady(fixture);

@@ -57,7 +57,7 @@ const catalog = createMemoryCatalogAccess([
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
 const faux = fauxProvider({
 	provider: "google",
-	models: [{ id: "gemini-3.5-flash-lite" }],
+	models: [{ id: "gemini-3.8-flash" }],
 	tokensPerSecond: 20,
 	tokenSize: { min: 1, max: 1 },
 });

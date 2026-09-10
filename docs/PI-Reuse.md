@@ -10,7 +10,7 @@ This document records what Livi copied from PI, what changed after copying, and 
 - License: MIT; copyright and permission notice retained in [PI provenance](PI-Provenance.md#upstream-copyright-and-permission-notice).
 - Original reference checkout: sibling `../pi`. Normal builds and runtime do not depend on it.
 
-The copies retain upstream runtime source, tests, and supporting files in the eight package directories. Their existing runtime source files were unchanged. Differences include package/build/test configuration, consolidated attribution, removed changelogs, and generated provider data. The application-level transcript fix is outside these copied packages.
+The copies retain upstream runtime source, tests, and supporting files in the eight package directories. Local differences include a supported harness turn-context API, package/build/test configuration, consolidated attribution, removed changelogs, and generated provider data. The application-level transcript fixes are outside these copied packages.
 
 ## Copied packages
 
@@ -34,6 +34,7 @@ All copied packages live under `packages`. Livi’s applications live separately
 | Package manifests | PI dependencies use `workspace:*`; JSON formatting changed | Resolve copied packages locally through pnpm |
 | Build configuration | Updated inherited config and dependency paths | Match Livi's `packages` layout |
 | Test/benchmark configuration | Updated aliases and TypeScript paths | Run against the local copied sources |
+| Agent harness context | Supplies lane, operation, turn, and callback phase to planning and tool execution | Keep Studio planning independent of persisted harness execution states |
 | AI build | Default `build` calls the existing `build:offline` | Avoid catalog downloads during normal builds |
 | AI dependencies | Added explicit `@smithy/types` dependency at `4.18.0` | Its existing source import needs a declared dependency under pnpm isolation |
 | AI catalogs | Added 39 provider JSON files and `.manifest.json` under `src/providers/data` | Retain model metadata with the source for offline builds |
@@ -66,7 +67,7 @@ The transcript adapter also normalizes snapshots and forwarded events into JSON 
 | `livi-server` | Node HTTP plus WebSocket transport, bootstrap/health routes, built frontend serving, SQLite repository ownership, stable server identity, and shutdown |
 | `livi-client` | React/Vite chat UI, browser WebSocket adapter, streamed Markdown, Send/Stop, conversation selection, and reconnect hydration |
 
-The current default model is `gemini-3.5-flash-lite`, configurable through `GEMINI_MODEL`. The application registers only Google's provider, configures empty tools and active-tool lists, registers no skills/extensions/MCP/execution environment, and disables automatic compaction.
+The current default model is `gemini-3.8-flash`, configurable through `GEMINI_MODEL`. The application registers only Google's provider, exposes an explicit Studio/catalog tool allowlist, registers no skills/extensions/MCP/execution environment, and enables the harness's default automatic compaction. Model-facing catalog results, room context, and saved references have byte budgets; full structured details remain persisted for the UI. Catalog follow-ups read paginated persisted history, and the transcript adapter preserves visible history across compaction and awaits navigation rebasing.
 
 The full copied agent core and other AI providers remain in source. Capabilities are restricted by Livi's wrapper and exposed services; the copied libraries have not been reduced to Gemini-only or chat-only implementations.
 

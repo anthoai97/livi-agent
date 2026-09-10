@@ -1,7 +1,8 @@
 import { type Context, replicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { AgentHarnessToolInvocation } from "@earendil-works/pi-agent-core";
-import { laneState, operationState, type Session } from "@earendil-works/pi-agent-core/harness/session";
+import { getAgentHarnessTurnContext } from "@earendil-works/pi-agent-core/harness/context";
+import type { Session } from "@earendil-works/pi-agent-core/harness/session";
 import type { StudioCommandResult, StudioSession, StudioSessionState } from "./services/studio.ts";
 import type { StudioBroker } from "./studio-broker.ts";
 import { type StudioCommandRecord, StudioJournal, type StudioPlanningSnapshot } from "./studio-journal.ts";
@@ -88,28 +89,18 @@ export class StudioSessionRuntime {
 	): Promise<StudioPlanningSnapshot | undefined> {
 		const active = withAbortSignal(this.shutdown.signal, context);
 		active.abortSignal?.throwIfAborted();
-		const identity = await this.session.mutate(async (reader) => {
-			const lane = await reader.getValue(laneState("main"), BACKGROUND_CONTEXT);
-			const operationId = lane?.value.currentOperationId;
-			if (!operationId) return undefined;
-			const operation = await reader.getValue(operationState(operationId), BACKGROUND_CONTEXT);
-			const state = operation?.value;
-			if (state?.at === "assistant.ready")
-				return { operationId, turnId: state.generationContext.stepId, planning: true };
-			if (state?.at === "tools") return { operationId, turnId: state.batch.turnId, planning: false };
-			return undefined;
-		}, BACKGROUND_CONTEXT);
+		const identity = getAgentHarnessTurnContext(context);
 		if (
 			invocation &&
 			(!identity ||
-				identity.planning ||
+				identity.phase !== "tools" ||
 				identity.operationId !== invocation.operationId ||
 				identity.turnId !== invocation.turnId)
 		)
 			throw new Error("studio_unavailable: Missing active room operation");
 		if (!identity) return undefined;
 		const existing = await this.journal.planning(identity.operationId, identity.turnId);
-		if (!invocation && (existing || !identity.planning)) {
+		if (!invocation && (existing || identity.phase === "tools")) {
 			this.debug("context.ready", {
 				operationId: identity.operationId,
 				turnId: identity.turnId,

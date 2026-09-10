@@ -5,13 +5,7 @@ import {
 	replicatedState,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-	AgentHarness,
-	type AgentLane,
-	DEFAULT_COMPACTION_SETTINGS,
-	HarnessClosed,
-	type Session,
-} from "@earendil-works/pi-agent-core";
+import { AgentHarness, type AgentLane, HarnessClosed, type Session } from "@earendil-works/pi-agent-core";
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
@@ -136,8 +130,9 @@ export class DecoratorSession implements RoutedSessionHandle {
 			models.setProvider(googleProvider());
 			registry = models;
 		}
-		const model = registry.getModel("google", options.modelId ?? "gemini-3.5-flash-lite");
-		if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-3.5-flash-lite"}`);
+		const modelId = options.modelId ?? "gemini-3.8-flash";
+		const model = registry.getModel("google", modelId);
+		if (!model) throw new Error(`Unknown Gemini model: ${modelId}`);
 		const studio = new StudioSessionRuntime(options.session, options.studio, options.onDebug);
 		let harness: AgentHarness<StudioToolContext> | undefined;
 		let runtime: DecoratorSession | undefined;
@@ -150,6 +145,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 					session: options.session,
 					models: registry,
 					model,
+					thinkingLevel: "low",
 					tools,
 					activeToolNames: tools.map((tool) => tool.name),
 					toolExecution: "sequential",
@@ -160,7 +156,6 @@ export class DecoratorSession implements RoutedSessionHandle {
 					}),
 					resources: {},
 					systemPrompt: studioSystemPrompt,
-					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
 				},
 				context,
 			);

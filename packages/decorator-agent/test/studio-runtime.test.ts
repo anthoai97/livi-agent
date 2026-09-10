@@ -195,7 +195,7 @@ async function fixture(onDebug?: (event: string, fields: Record<string, unknown>
 	const stored = await repo.create({}, context);
 	const broker = new StudioBroker({ timeoutMs: 500 });
 	const fake = await adapter(broker, stored);
-	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const errors: Error[] = [];
@@ -263,13 +263,17 @@ it("refreshes a rejected stale move and recomputes from the new position in the 
 				(message) => message.role === "toolResult" && message.toolName === "get_room_context",
 			);
 			if (result?.role !== "toolResult" || result.content[0]?.type !== "text") throw new Error("Missing refresh");
-			const planning = JSON.parse(result.content[0].text) as { operationId: string; snapshot: StudioSnapshot };
-			expect(planning.snapshot.revision).toBe("2");
-			expect(planning.snapshot.selectedObjectIds).toEqual([]);
+			const planning = JSON.parse(result.content[0].text) as {
+				revision: string;
+				selectedCount: number;
+				objects: StudioSnapshot["objects"];
+			};
+			expect(planning.revision).toBe("2");
+			expect(planning.selectedCount).toBe(0);
 			expect(input.systemPrompt).toContain('"position":[4,2,0]');
 			// Initial generation, post-rejection generation, explicit refresh; no incidental fetch masks the handoff.
 			expect(fresh).toHaveBeenCalledTimes(3);
-			const object = planning.snapshot.objects.find((object) => object.id === "chair-1")!;
+			const object = planning.objects.find((object) => object.id === "chair-1")!;
 			return fauxAssistantMessage(
 				fauxToolCall("move_object", {
 					objectId: object.id,
@@ -484,7 +488,7 @@ it("uses the room inventory for a named object when nothing is selected", async 
 	fake.state.snapshot.objects[0]!.name = "Sofa";
 	faux.setResponses([
 		(input) => {
-			expect(input.systemPrompt).toContain('"selectedObjectIds":[]');
+			expect(input.systemPrompt).toContain('"selectedCount":0');
 			expect(input.systemPrompt).toContain('"name":"Sofa"');
 			expect(input.systemPrompt).toContain('"id":"chair-1"');
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [1.5, 2, 0] }), {
@@ -1515,3 +1519,89 @@ it.each(["restore", "wrong-object", "missing-command", "missing-product"])(
 		}
 	},
 );
+
+it("restores a saved replacement from journal references after repeated compaction and reload", async () => {
+	const { runtime, fake, faux, repo, stored, broker, models } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("replace_object", { objectId: "chair-1" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Replaced"),
+	]);
+	expect(
+		await runtime.controller.prompt(
+			{
+				message: "Replace with this sofa",
+				action: {
+					type: "replace_asset",
+					selectedProductId: "new-sofa",
+					targetObjectId: "chair-1",
+					designId: "simulated-room",
+					expectedRevision: "1",
+					expectedCatalogId: "catalog-chair",
+				},
+			},
+			context,
+		),
+	).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const original = (await runtime.studio.journal.records())[0]!;
+	expect(original.command.action.type).toBe("replace");
+	let compactions = 0;
+	runtime.harness.hooks.on("before_compaction", ({ preparation }) => {
+		compactions++;
+		return {
+			compaction: {
+				summary: "The user has been decorating the room.",
+				tokensBefore: preparation.tokensBefore,
+				retainedTail: [],
+			},
+		};
+	});
+	for (let index = 0; index < 2; index++) {
+		if (index > 0) {
+			faux.setResponses([fauxAssistantMessage("Ready")]);
+			await prompt(runtime, "Continue later");
+			await runtime.lane.waitForIdle(context);
+		}
+		expect(await runtime.lane.compact(undefined, context)).toMatchObject({
+			ok: true,
+			value: { compaction: { status: "completed" } },
+		});
+	}
+	expect(compactions).toBe(2);
+	await runtime.close();
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		studio: broker,
+	});
+	cleanup.push(() => recovered.close());
+	faux.setResponses([
+		(input) => {
+			expect(JSON.stringify(input.messages)).not.toContain(original.command.commandId);
+			const savedLine = input.systemPrompt?.split("\n").find((line) => line.startsWith("Recent saved actions"));
+			if (!savedLine) throw new Error("Missing saved actions in system prompt");
+			const saved = JSON.parse(savedLine.slice(savedLine.indexOf(": ") + 2)) as {
+				actions: Array<{ commandId: string; objectId: string }>;
+			};
+			const reference = saved.actions.find((record) => record.commandId === original.command.commandId);
+			expect(reference?.objectId).toBe("chair-1");
+			return fauxAssistantMessage(
+				fauxToolCall("replace_object", {
+					objectId: reference!.objectId,
+					originalCommandId: reference!.commandId,
+				}),
+				{ stopReason: "toolUse" },
+			);
+		},
+		fauxAssistantMessage("Restored the previous chair"),
+	]);
+	await prompt(recovered, "Change it back to the previous product");
+	await recovered.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(2);
+	expect(fake.state.commands[1]).toMatchObject({
+		objectId: "chair-1",
+		action: { type: "replace", catalogId: "catalog-chair", expectedCatalogId: "new-sofa" },
+		reversesCommandId: original.command.commandId,
+	});
+	expect(fake.state.snapshot.objects[0]?.product?.catalogId).toBe("catalog-chair");
+});

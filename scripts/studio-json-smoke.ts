@@ -99,7 +99,7 @@ if (values.help) {
 	const reportPath = resolve(values.report ?? "artifacts/studio-smoke.json");
 	const faux =
 		values.mode === "injected"
-			? fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] })
+			? fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] })
 			: undefined;
 	const models = faux ? createModels() : undefined;
 	if (faux) models!.setProvider(faux.provider);

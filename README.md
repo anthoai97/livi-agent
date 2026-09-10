@@ -15,7 +15,7 @@ cp .env.example .env
 pnpm dev
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api/bootstrap`, `/health`, and `/ws` to the server on `127.0.0.1:3001`. Both services bind to loopback by default. The key stays on the server. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`; set it to a model present in the retained PI catalog when needed.
+Open http://127.0.0.1:5173. Vite proxies `/api/bootstrap`, `/health`, and `/ws` to the server on `127.0.0.1:3001`. Both services bind to loopback by default. The key stays on the server. `GEMINI_MODEL` defaults to `gemini-3.8-flash`; set it to a model present in the retained PI catalog when needed.
 
 Optional catalog search uses `CATALOG_DATABASE_URL`, a PostgreSQL connection string for a dedicated read-only role against `pipeline.design_asset_registry`. Leave it unset for chat and Studio without catalog results; catalog tools then report that the catalog is unavailable. A malformed URL prevents server startup. The browser never receives this value. Registry prices have no currency, so monetary filters cannot match until a verified currency mapping exists.
 
