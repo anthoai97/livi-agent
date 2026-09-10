@@ -5,13 +5,7 @@ import {
 	replicatedState,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-	AgentHarness,
-	type AgentLane,
-	DEFAULT_COMPACTION_SETTINGS,
-	HarnessClosed,
-	type Session,
-} from "@earendil-works/pi-agent-core";
+import { AgentHarness, type AgentLane, HarnessClosed, type Session } from "@earendil-works/pi-agent-core";
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
@@ -160,7 +154,6 @@ export class DecoratorSession implements RoutedSessionHandle {
 					}),
 					resources: {},
 					systemPrompt: studioSystemPrompt,
-					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
 				},
 				context,
 			);

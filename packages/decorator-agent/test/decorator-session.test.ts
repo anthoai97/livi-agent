@@ -56,7 +56,7 @@ it("returns durable admission while generation runs and survives caller cancella
 	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(entries.filter((entry) => entry.type === "message" && entry.message.role === "user")).toHaveLength(1);
 	expect(entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant", stopReason: "stop" } });
-	expect(await runtime.harness.getCompactionSettings(context)).toMatchObject({ enabled: false });
+	expect(await runtime.harness.getCompactionSettings(context)).toMatchObject({ enabled: true });
 	expect(await runtime.harness.getResources(context)).toEqual({});
 });
 

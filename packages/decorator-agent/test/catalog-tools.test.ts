@@ -1,6 +1,12 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { MemorySessionRepo } from "@earendil-works/pi-agent-core/harness/session";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	createModels,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type Context as ModelContext,
+} from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import {
 	type CatalogProduct,
@@ -8,6 +14,7 @@ import {
 	createMemoryCatalogAccess,
 	mergeCatalogFollowUp,
 } from "../src/catalog.ts";
+import { loadRecommendationHistory } from "../src/catalog-history.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
 import type {
 	StudioCommand,
@@ -211,11 +218,16 @@ async function attachStudio(broker: StudioBroker) {
 	return { binding, state };
 }
 
-async function session(options: { catalog?: ReturnType<typeof createMemoryCatalogAccess>; studio?: boolean } = {}) {
+async function session(
+	options: { catalog?: ReturnType<typeof createMemoryCatalogAccess>; studio?: boolean; contextWindow?: number } = {},
+) {
 	const repo = new MemorySessionRepo();
 	cleanup.push(() => repo.close(context));
 	const stored = await repo.create({}, context);
-	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+	const faux = fauxProvider({
+		provider: "google",
+		models: [{ id: "gemini-3.5-flash-lite", contextWindow: options.contextWindow }],
+	});
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const broker = options.studio ? new StudioBroker({ timeoutMs: 500 }) : undefined;
@@ -254,9 +266,20 @@ async function search(catalog: ReturnType<typeof createMemoryCatalogAccess>, arg
 it("search_catalog matches yellow sectionals including L-shaped and excludes distractors", async () => {
 	const result = await search(createMemoryCatalogAccess(catalogProducts), { color: "yellow", category: "sectional" });
 	const payload = result.details as CatalogRecommendationDetails;
-	expect(JSON.parse(result.content[0] && result.content[0].type === "text" ? result.content[0].text : "")).toEqual(
-		payload,
+	const modelPayload = JSON.parse(
+		result.content[0] && result.content[0].type === "text" ? result.content[0].text : "",
 	);
+	expect(modelPayload).toMatchObject({
+		kind: payload.kind,
+		searchId: payload.searchId,
+		products: payload.products.map(({ catalogId, name, price, dimensions }) => ({
+			catalogId,
+			name,
+			price,
+			dimensions,
+		})),
+	});
+	expect(JSON.stringify(modelPayload)).not.toContain("https://");
 	expect(payload.kind).toBe("catalog_recommendations");
 	expect(payload.searchId).toBe("invocation");
 	expect(payload.products.map((entry) => entry.catalogId).sort()).toEqual([
@@ -828,4 +851,85 @@ it("defaults an explicit price bound to USD without adding a room budget", async
 	const result = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
 	expect(result?.resolvedConstraints.maxPrice).toEqual({ amountMinor: 50000, currency: "USD" });
 	expect(result?.products.map((p) => p.catalogId).sort()).toEqual(["usd-250", "usd-400"]);
+});
+
+async function compactAutomatically(runtime: DecoratorSession, faux: ReturnType<typeof fauxProvider>) {
+	const before = (await runtime.studio.session.findEntries({ type: "compaction" }, context)).length;
+	faux.setResponses(
+		Array.from(
+			{ length: 12 },
+			() => (input: ModelContext) =>
+				fauxAssistantMessage(
+					input.systemPrompt?.includes("context summarization assistant")
+						? "Discussed furniture. Exact product and saved action identifiers are omitted."
+						: "Understood.",
+				),
+		),
+	);
+	expect(
+		await runtime.controller.prompt(
+			{ message: `Consider these room notes: ${"neutral notes ".repeat(8000)}` },
+			context,
+		),
+	).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const entries = await runtime.studio.session.findEntries({ type: "compaction" }, context);
+	expect(entries.length).toBeGreaterThan(before);
+	const latest = entries[0]!;
+	expect(latest.type).toBe("compaction");
+	if (latest.type === "compaction")
+		expect(latest.retainedTail.some((message) => message.role === "toolResult")).toBe(false);
+}
+
+it("keeps catalog follow-ups and exact comparison references after repeated automatic compaction and reload", async () => {
+	const fixture = await session({ catalog: createMemoryCatalogAccess(catalogProducts), contextWindow: 40000 });
+	const { runtime, faux, repo, stored, models, catalog } = fixture;
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", maxAmountMinor: 50000, limit: 1 }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("One desk."),
+	]);
+	await runtime.controller.prompt({ message: "Show desks under 500 USD" }, context);
+	await runtime.lane.waitForIdle(context);
+	const first = (await loadRecommendationHistory(stored, context))[0]!;
+	expect(first.products.map((entry) => entry.catalogId)).toEqual(["usd-400"]);
+	await compactAutomatically(runtime, faux);
+	await compactAutomatically(runtime, faux);
+	await runtime.close();
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		catalog,
+	});
+	cleanup.push(() => recovered.close());
+	for (const followUp of ["show_more", "cheaper", "smaller"] as const) {
+		let generations = 0;
+		faux.setResponses(
+			Array.from({ length: 12 }, () => (input: ModelContext) => {
+				if (input.systemPrompt?.includes("context summarization assistant"))
+					return fauxAssistantMessage("Discussed furniture. Exact identifiers are omitted.");
+				expect(input.systemPrompt).toContain(first.searchId);
+				if (generations++ > 0) return fauxAssistantMessage("Here is a smaller desk.");
+				return fauxAssistantMessage(
+					fauxToolCall("search_catalog", {
+						followUp,
+						searchId: first.searchId,
+						...(followUp === "show_more" ? {} : { referenceCatalogId: "usd-400" }),
+						...(followUp === "smaller" ? { dimension: "width" } : {}),
+					}),
+					{ stopReason: "toolUse" },
+				);
+			}),
+		);
+		await recovered.controller.prompt({ message: followUp }, context);
+		await recovered.lane.waitForIdle(context);
+		const latest = (await loadRecommendationHistory(recovered.studio.session, context))[0]!;
+		expect(latest.searchId).toBe(first.searchId);
+		expect(latest.followUp).toBe(followUp);
+		expect(latest.products.map((entry) => entry.catalogId)).toEqual(["usd-250"]);
+		if (followUp === "show_more") expect(latest.shownIds).toEqual(["usd-400", "usd-250"]);
+		else expect(latest.resolvedConstraints.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
+		if (followUp === "smaller") expect(latest.resolvedConstraints.maxWidth).toBe(1.2);
+	}
 });
