@@ -1,6 +1,6 @@
 import type { Api, Model, Tool } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../../types.ts";
-import { type Context, getTelemetryContext, withAbortSignal } from "../../context.ts";
+import { type Context, getTelemetryContext, withAbortSignal, withAgentHarnessTurnContext } from "../../context.ts";
 import { type HarnessAssistantStreamConfig, streamHarnessAssistant } from "../../execution/assistant.ts";
 import { applyStreamOptionsPatch } from "../../hooks.ts";
 import { SessionInvariantError } from "../../session/session.ts";
@@ -100,7 +100,18 @@ async function prepareGeneration<TContext extends object | undefined>(
 
 	const messages = await readBoundedContext(lane, drive, generation);
 	if (messages.kind === "cancel_requested") return messages;
-	const systemPrompt = await resolveSystemPrompt(lane, drive.context);
+	const systemPrompt = await resolveSystemPrompt(
+		lane,
+		withAgentHarnessTurnContext(
+			{
+				lane: lane.name,
+				operationId: drive.operationId,
+				turnId: generation.generationContext.stepId,
+				phase: "assistant",
+			},
+			drive.context,
+		),
+	);
 	const beforeRequest = await lane.hooks.runWithGate(
 		"before_request",
 		{

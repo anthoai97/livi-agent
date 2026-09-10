@@ -1,5 +1,6 @@
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentToolCall, AgentToolResult } from "../../../types.ts";
+import { type Context, withAgentHarnessTurnContext } from "../../context.ts";
 import { AbortRequested } from "../../execution/effect-gate.ts";
 import {
 	applyBeforeToolDecision,
@@ -341,10 +342,10 @@ function readCheckpoint<TContext extends object | undefined>(
 
 async function resolveToolContext<TContext extends object | undefined>(
 	lane: Lane<TContext>,
-	drive: Drive,
+	context: Context,
 ): Promise<TContext> {
 	const source = lane.readConfig().toolContext;
-	return (typeof source === "function" ? await source(drive.context) : source) as TContext;
+	return (typeof source === "function" ? await source(context) : source) as TContext;
 }
 
 async function performToolInvocation<TContext extends object | undefined>(
@@ -389,7 +390,10 @@ async function performToolInvocation<TContext extends object | undefined>(
 			},
 			toolContext,
 			capability.invocation,
-			drive.context,
+			withAgentHarnessTurnContext(
+				{ lane: lane.name, operationId: drive.operationId, turnId: batch.turnId, phase: "tools" },
+				drive.context,
+			),
 		);
 	} catch (error) {
 		capability.expire();
@@ -685,7 +689,13 @@ export async function runTools<TContext extends object | undefined>(
 	const active = new Set(batch.configuration.activeToolNames);
 	const tools = config.tools.filter((tool) => active.has(tool.name));
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	const toolContext = await resolveToolContext(lane, drive);
+	const toolContext = await resolveToolContext(
+		lane,
+		withAgentHarnessTurnContext(
+			{ lane: lane.name, operationId: drive.operationId, turnId: batch.turnId, phase: "tools" },
+			drive.context,
+		),
+	);
 	return run.settings.toolExecution === "sequential"
 		? runSequential(lane, drive, current.run, sources, { tools, toolsByName, toolContext }, recovery)
 		: runParallel(lane, drive, current.run, sources, tools, toolsByName, toolContext, recovery);
