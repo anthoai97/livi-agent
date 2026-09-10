@@ -1,4 +1,4 @@
-export const DEFAULT_CATALOG_LIMIT = 8;
+export const DEFAULT_CATALOG_LIMIT = 6;
 export const MAX_CATALOG_LIMIT = 20;
 
 export type CatalogErrorCode =

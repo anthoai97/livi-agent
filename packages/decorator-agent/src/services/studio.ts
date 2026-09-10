@@ -58,7 +58,8 @@ export interface StudioSelectionUpdate {
 export type StudioAction =
 	| { type: "move"; position: StudioVector3 }
 	| { type: "rotate"; rotation: StudioVector3 }
-	| { type: "remove" };
+	| { type: "remove" }
+	| { type: "replace"; catalogId: string; expectedCatalogId: string | null };
 export interface StudioCommand {
 	commandId: string;
 	conversationId: string;

@@ -218,6 +218,12 @@ export class JsonStudioAdapter {
 					case "rotate":
 						object.rotation = structuredClone(command.action.rotation);
 						break;
+					case "replace":
+						if ((object.product?.catalogId ?? null) !== command.action.expectedCatalogId)
+							throw new Error("Prior catalog product changed");
+						// Synthetic product substitution only; real asset loading belongs to Studio.
+						object.product = { catalogId: command.action.catalogId, price: null };
+						break;
 					case "remove":
 						next.snapshot.objects = next.snapshot.objects.filter((entry) => entry.id !== command.objectId);
 						next.snapshot.selectedObjectIds = next.snapshot.selectedObjectIds.filter(
@@ -225,7 +231,7 @@ export class JsonStudioAdapter {
 						);
 						break;
 					default:
-						throw new Error("Only move, rotate and remove are supported");
+						throw new Error("Unsupported Studio action");
 				}
 				validateSnapshot(next.snapshot);
 				next.saveCount += 1;

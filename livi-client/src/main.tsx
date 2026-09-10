@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { Client, createClientServiceTransport } from "@earendil-works/pi-client";
 import {
 	AgentController,
+	type AgentPromptAction,
 	type CatalogMoney,
 	type CatalogProduct,
 	type CatalogRecommendationDetails,
@@ -223,15 +224,15 @@ function App() {
 		}
 	}
 
-	async function send() {
-		if (!controller || !draft.trim() || operation || busy || studioChanging) return;
+	async function send(action?: Extract<AgentPromptAction, { type: "replace_asset" }>, message = draft.trim()) {
+		if (!controller || (!action && !draft.trim()) || operation || busy || studioChanging || attaching) return;
 		setBusy(true);
 		setError("");
-		const message = draft.trim();
 		try {
-			const result = await controller.prompt({ message }, context);
-			if (result.accepted) setDraft("");
-			else setError(result.error.message);
+			const result = await controller.prompt({ message, ...(action ? { action } : {}) }, context);
+			if (result.accepted) {
+				if (!action) setDraft("");
+			} else setError(result.error.message);
 		} catch (failure) {
 			setError(
 				`${failure instanceof Error ? failure.message : String(failure)}. Delivery is uncertain; this message will not be resent automatically.`,
@@ -271,6 +272,12 @@ function App() {
 		}
 	}
 
+	const catalogSelection = {
+		onReplace: (action: Extract<AgentPromptAction, { type: "replace_asset" }>, message: string) =>
+			void send(action, message),
+		designId: studioState?.phase === "ready" ? studioState.binding?.designId : undefined,
+		disabled: !controller || !connection || busy || attaching || studioChanging || Boolean(operation),
+	};
 	const bindingLocked = !studio || studioChanging || Boolean(operation);
 	const attachedStudio = studios.find(
 		(item) => item.designId === studioState?.binding?.designId && item.tabId === studioState.binding.tabId,
@@ -413,13 +420,32 @@ function App() {
 					)}
 					{messages.map((item) => {
 						if (item.kind === "cards") {
-							return <CatalogCards key={item.id} details={item.details} />;
+							return (
+								<CatalogCards
+									key={item.id}
+									details={item.details}
+									completed={item.completed}
+									{...catalogSelection}
+								/>
+							);
 						}
 						return (
 							<article key={item.id} className={`message ${item.role}`}>
 								<h2>{item.role === "user" ? "You" : "Livi"}</h2>
 								<Markdown skipHtml>{item.text}</Markdown>
-								{item.details ? <CatalogCards details={item.details} /> : null}
+								{item.details ? (
+									<CatalogCards details={item.details} completed={item.completed} {...catalogSelection} />
+								) : null}
+								{item.metrics && (
+									<p
+										className="message-metrics"
+										title="Cumulative usage for this request, including tool-call rounds and cached input. Time runs from the saved user message to this saved reply."
+									>
+										Input tokens: {item.metrics.input.toLocaleString()} · Output tokens:{" "}
+										{item.metrics.output.toLocaleString()} · Total time:{" "}
+										{(item.metrics.elapsedMs / 1000).toFixed(1)}s
+									</p>
+								)}
 							</article>
 						);
 					})}
@@ -484,9 +510,13 @@ function App() {
 
 type TranscriptEntry = NonNullable<TranscriptState["snapshot"]>["transcript"][number];
 type StreamingMessage = NonNullable<NonNullable<TranscriptState["snapshot"]>["operation"]>["streamingMessage"];
-type ChatItem =
+type ChatItem = {
+	completed?: boolean;
+	metrics?: { input: number; output: number; elapsedMs: number };
+} & (
 	| { id: string; kind: "message"; role: "user" | "assistant"; text: string; details?: CatalogRecommendationDetails }
-	| { id: string; kind: "cards"; details: CatalogRecommendationDetails };
+	| { id: string; kind: "cards"; details: CatalogRecommendationDetails }
+);
 
 function messageText(message: { content?: unknown }): string {
 	const content = message.content;
@@ -514,6 +544,10 @@ function catalogDetails(entry: TranscriptEntry): CatalogRecommendationDetails | 
 
 function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessage): ChatItem[] {
 	const items: ChatItem[] = [];
+	let requestStartedAt: number | undefined;
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let hasUsage = false;
 	let pending: { id: string; details: CatalogRecommendationDetails } | undefined;
 	const takePending = () => {
 		const current = pending;
@@ -521,12 +555,49 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 		return current?.details;
 	};
 	for (const entry of entries) {
+		if (entry.type === "message" && entry.message.role === "user") {
+			requestStartedAt = entry.timestamp;
+			inputTokens = 0;
+			outputTokens = 0;
+			hasUsage = false;
+		} else if (entry.type === "message" && entry.message.role === "assistant" && entry.message.usage) {
+			const usage = entry.message.usage;
+			inputTokens += usage.input + usage.cacheRead + usage.cacheWrite;
+			outputTokens += usage.output;
+			hasUsage = true;
+		}
 		const cards = catalogDetails(entry);
 		if (cards) {
 			pending = { id: entry.id, details: cards };
 			continue;
 		}
 		if (entry.type !== "message") continue;
+		if (
+			entry.message.role === "toolResult" &&
+			entry.message.toolName === "replace_object" &&
+			!entry.message.isError
+		) {
+			const details = entry.message.details;
+			const result = details && typeof details === "object" && "result" in details ? details.result : undefined;
+			if (
+				result &&
+				typeof result === "object" &&
+				"status" in result &&
+				result.status === "saved" &&
+				"snapshot" in result
+			) {
+				const saved = result.snapshot;
+				if (saved && typeof saved === "object" && "designId" in saved && typeof saved.designId === "string") {
+					if (pending) {
+						items.push({ id: pending.id, kind: "cards", details: pending.details });
+						pending = undefined;
+					}
+					for (const item of items) {
+						if (item.details?.resolvedConstraints.target?.designId === saved.designId) item.completed = true;
+					}
+				}
+			}
+		}
 		if (entry.message.role !== "user" && entry.message.role !== "assistant") continue;
 		const text = messageText(entry.message);
 		if (!text) continue;
@@ -540,6 +611,14 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 			role: entry.message.role,
 			text,
 			details: entry.message.role === "assistant" ? takePending() : undefined,
+			metrics:
+				entry.message.role === "assistant" && hasUsage && requestStartedAt !== undefined
+					? {
+							input: inputTokens,
+							output: outputTokens,
+							elapsedMs: Math.max(0, entry.timestamp - requestStartedAt),
+						}
+					: undefined,
 		});
 	}
 	if (streaming) {
@@ -579,17 +658,58 @@ function formatDimensions(product: CatalogProduct): string | null {
 	return parts.length ? `${parts.join(" · ")} ${dimensions.unit}` : null;
 }
 
-function CatalogCards({ details }: { details: CatalogRecommendationDetails }) {
+function CatalogCards({
+	details,
+	completed,
+	onReplace,
+	designId,
+	disabled,
+}: {
+	details: CatalogRecommendationDetails;
+	completed?: boolean;
+	onReplace: (action: Extract<AgentPromptAction, { type: "replace_asset" }>, message: string) => void;
+	designId: string | undefined;
+	disabled: boolean;
+}) {
+	const target = details.resolvedConstraints.target;
 	return (
 		<ul className="catalog-results" aria-label="Catalog recommendations">
-			{details.products.map((product, index) => (
-				<CatalogCard key={product.catalogId} product={sanitizeCatalogProduct(product)} recommended={index === 0} />
+			{details.products.map((product) => (
+				<CatalogCard
+					key={product.catalogId}
+					product={sanitizeCatalogProduct(product)}
+					disabled={disabled || designId !== target?.designId}
+					onReplace={
+						target && !completed
+							? () =>
+									onReplace(
+										{
+											type: "replace_asset",
+											selectedProductId: product.catalogId,
+											targetObjectId: target.objectId,
+											designId: target.designId,
+											expectedRevision: target.revision,
+											expectedCatalogId: target.catalogId,
+										},
+										`Replace the ${target.category} with ${sanitizeCatalogProduct(product).name}.`,
+									)
+							: undefined
+					}
+				/>
 			))}
 		</ul>
 	);
 }
 
-function CatalogCard({ product, recommended }: { product: CatalogProduct; recommended: boolean }) {
+function CatalogCard({
+	product,
+	onReplace,
+	disabled,
+}: {
+	product: CatalogProduct;
+	onReplace: (() => void) | undefined;
+	disabled: boolean;
+}) {
 	const [imageFailed, setImageFailed] = useState(false);
 	const price = product.price ? formatCatalogPrice(product.price) : null;
 	const dimensions = formatDimensions(product);
@@ -598,7 +718,6 @@ function CatalogCard({ product, recommended }: { product: CatalogProduct; recomm
 	return (
 		<li className="catalog-card" data-catalog-id={product.catalogId}>
 			<div className="catalog-card-image">
-				{recommended ? <span className="catalog-badge">Recommended</span> : null}
 				{showImage ? (
 					<img src={product.imageUrl!} alt="" onError={() => setImageFailed(true)} />
 				) : (
@@ -624,6 +743,11 @@ function CatalogCard({ product, recommended }: { product: CatalogProduct; recomm
 					) : (
 						<p className="catalog-card-missing">Price unavailable</p>
 					)}
+					{onReplace ? (
+						<button type="button" disabled={disabled} onClick={onReplace}>
+							Replace with this
+						</button>
+					) : null}
 					{product.productUrl ? (
 						<a className="catalog-card-link" href={product.productUrl} target="_blank" rel="noreferrer">
 							View product

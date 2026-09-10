@@ -1,6 +1,6 @@
 # Catalog search (#26)
 
-Catalog search embeds the query, retrieves the nearest eligible indexed products by cosine distance, and returns eight products by default. It makes no catalog attribute-validation or reranking model call. Replacement execution belongs to #27.
+Catalog search embeds the query, retrieves the nearest eligible indexed products by cosine distance, and returns six products by default. It makes no catalog attribute-validation or reranking model call. Replacement execution belongs to #27.
 
 ## Current search flow
 
@@ -8,7 +8,7 @@ Catalog search embeds the query, retrieves the nearest eligible indexed products
 2. A new replacement search resolves its target from the original planning snapshot and saves the object ID, design ID and revision. Missing room evidence or an ambiguous/conflicting target stops that search before catalog access. General discovery can run without Studio. Follow-ups reuse their saved target through attachment changes.
 3. The adapter embeds the search text using the pipeline's configured embedding model. If neither query nor original message is available, it builds search text from supplied color, style, material and category; empty search text fails with `invalid_arguments`. All searches use this vector route, including requests with an explicit category. Studio availability does not select a different retrieval strategy.
 4. SQL joins `pipeline.asset_embeddings` to `pipeline.design_asset_registry` by asset UUID. Existing shoppable/non-deleted eligibility, explicit category, color, style, material, dimension, USD price and exclusion filters apply before pagination. Eligible rows are ordered by cosine distance, with a deterministic ID tie-breaker. Products without an existing embedding are not searched.
-5. SQL fetches the requested page plus one extra row to determine whether more results exist. The adapter hydrates product facts and returns up to eight products by default, preserving vector order. It does not validate attributes with a model, request evidence quotes, or rerank the results.
+5. SQL fetches the requested page plus one extra row to determine whether more results exist. The adapter hydrates product facts and returns up to six products by default, preserving vector order. It does not validate attributes with a model, request evidence quotes, or rerank the results.
 6. The tool saves product snapshots, original intent, target, constraints and retrieval/pagination metadata in the transcript. The chat model receives the result and writes its explanation. Reopening the chat renders saved cards without another catalog query. Search never executes a replacement.
 
 Similarity is approximate evidence of relevance, not proof that every requested attribute matches. Explicit structured filters still restrict results, but other wording depends on existing embeddings and catalog facts. Improving the datasource and searchable descriptions is deferred. There is no text-search fallback or unindexed-product supplementation.
@@ -27,7 +27,7 @@ Registry prices default to USD (explicit product decision). Positive finite doll
 
 ## Pagination and follow-ups
 
-`offset` is a conventional result offset within the filtered vector ordering, with no former 80/160-candidate batch boundary. The default `limit` is eight; callers can request 1–20. `pagination.nextOffset` advances by the actual returned count. The extra SQL row is a lookahead only and is not shown or consumed.
+`offset` is a conventional result offset within the filtered vector ordering, with no former 80/160-candidate batch boundary. The default `limit` is six; callers can request 1–20. `pagination.nextOffset` advances by the actual returned count. The extra SQL row is a lookahead only and is not shown or consumed.
 
 `show_more` keeps the search constraints and excludes already shown products. It retains the prior page’s starting offset (normally zero), so an explicitly skipped prefix stays skipped as shown products are removed from the eligible set. It does not combine growing exclusions with `nextOffset`, which would skip additional products. Unshown products, including the lookahead row, remain eligible. `cheaper` and `smaller` tighten the relevant bound, preserve intentional exclusions and reset traversal exclusions so previously shown products can qualify again. Existing tighter bounds and currency remain intact. Follow-ups rerun embedding and retrieval; they do not display a cached next page.
 

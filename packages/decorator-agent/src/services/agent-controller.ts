@@ -2,7 +2,14 @@ import { type Context, defineService } from "@earendil-works/chord";
 
 export type AgentPromptAction =
 	| { type: "add_asset"; selectedProductId: string; quantity: number }
-	| { type: "replace_asset"; selectedProductId: string; targetObjectId: string };
+	| {
+			type: "replace_asset";
+			selectedProductId: string;
+			targetObjectId: string;
+			designId: string;
+			expectedRevision: string;
+			expectedCatalogId: string | null;
+	  };
 export interface AgentPromptRequest {
 	message: string;
 	action?: AgentPromptAction;

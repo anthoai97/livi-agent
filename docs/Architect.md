@@ -50,7 +50,7 @@ Browser code imports `@livi/decorator-agent/contracts`, which has no server runt
 
 ## Defaults
 
-Client `127.0.0.1:5173`, server `127.0.0.1:3001`, no login. Model credentials remain server-only. `.data/sessions` contains one SQLite file per conversation, with stable server identity beside the directory. A single process owns each data directory. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
+Client `127.0.0.1:5173`, server `127.0.0.1:3001`, no login. Model credentials remain server-only. `.data/sessions` contains one SQLite file per conversation, with stable server identity beside the directory. A single process owns each data directory. `GEMINI_MODEL` defaults to `gemini-3.8-flash`.
 
 ## Studio routing and authority
 

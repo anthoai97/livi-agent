@@ -57,7 +57,7 @@ const catalog = createMemoryCatalogAccess([
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
 const faux = fauxProvider({
 	provider: "google",
-	models: [{ id: "gemini-3.5-flash-lite" }],
+	models: [{ id: "gemini-3.8-flash" }],
 	tokensPerSecond: 20,
 	tokenSize: { min: 1, max: 1 },
 });
@@ -221,9 +221,7 @@ try {
 	]);
 	await page.getByRole("button", { name: "Chats", exact: true }).click();
 	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
-	await page
-		.getByRole("textbox", { name: "Message", exact: true })
-		.fill("Can you replace the current sofa with a yello sectional sofa");
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Find yellow sectional sofas");
 	await page.getByRole("button", { name: "Send", exact: true }).click();
 	await page.getByText("Here are yellow sectional sofas to consider for your room.", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
@@ -248,18 +246,98 @@ try {
 		catalogIds,
 	);
 	assert.match(await page.locator("[data-catalog-id='yellow-haven'] .catalog-card-price").innerText(), /499\.99/);
+	// Select a recommendation with its saved target after changing the editor selection.
+	await page.getByRole("button", { name: "Studio", exact: true }).click();
+	await page
+		.getByLabel("Connected Studios", { exact: true })
+		.selectOption(JSON.stringify(["synthetic-room", "browser-studio"]));
+	await page.getByRole("button", { name: "Attach design", exact: true }).click();
+	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
+	const original = adapter.snapshot;
+	const originalObject = original.objects.find((object) => object.id === "chair-red-1")!;
+	faux.appendResponses([
+		fauxAssistantMessage(
+			fauxToolCall("search_catalog", {
+				purpose: "replacement",
+				targetObjectId: "chair-red-1",
+				category: "sectional",
+				color: "yellow",
+				query: "yellow sectional",
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Choose a replacement for the Red chair."),
+	]);
+	await page
+		.getByRole("textbox", { name: "Message", exact: true })
+		.fill("Replace the Red chair with a yellow sectional");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Choose a replacement for the Red chair.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	const replacementCard = page.locator("[data-catalog-id='yellow-cove']").last();
+	assert.equal(await page.getByRole("button", { name: "Replace with this", exact: true }).count(), 3);
+	await adapter.select([original.objects.find((object) => object.id !== originalObject.id)!.id]);
+	faux.appendResponses([
+		(input) => {
+			assert.ok(input.systemPrompt?.includes(`"selectedProductId":"yellow-cove"`));
+			assert.ok(input.systemPrompt?.includes(`"expectedRevision":${JSON.stringify(original.revision)}`));
+			return fauxAssistantMessage(fauxToolCall("replace_object", { objectId: "chair-red-1" }), {
+				stopReason: "toolUse",
+			});
+		},
+		(input) => {
+			const result = input.messages.findLast((message) => message.role === "toolResult");
+			assert.ok(result?.role === "toolResult" && !result.isError);
+			assert.ok(JSON.stringify(result.content).includes("Saved replace"));
+			return fauxAssistantMessage("Studio confirmed the selected replacement saved.");
+		},
+	]);
+	const commandsBefore = adapter.emitted.length;
+	await replacementCard.getByRole("button", { name: "Replace with this", exact: true }).click();
+	await page.getByText("Studio confirmed the selected replacement saved.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(adapter.emitted.length, commandsBefore + 1);
+	await page.getByText("Replace the chair with Cove Yellow Sectional.", { exact: true }).waitFor();
+	const replacement = adapter.emitted.at(-1)!;
+	assert.deepEqual(replacement.binding, { designId: original.designId, tabId: "browser-studio" });
+	assert.equal(replacement.objectId, originalObject.id);
+	assert.equal(replacement.expectedRevision, original.revision);
+	assert.deepEqual(replacement.action, {
+		type: "replace",
+		catalogId: "yellow-cove",
+		expectedCatalogId: originalObject.product?.catalogId ?? null,
+	});
+	const replacementResult = adapter.results[replacement.commandId]!.result;
+	assert.equal(replacementResult.status, "saved");
+	assert.equal(await page.getByRole("button", { name: "Replace with this", exact: true }).count(), 0);
+	assert.equal(
+		adapter.snapshot.objects.find((object) => object.id === originalObject.id)?.product?.catalogId,
+		"yellow-cove",
+	);
+	assert.deepEqual(
+		adapter.snapshot.objects.filter((object) => object.id !== originalObject.id),
+		original.objects.filter((object) => object.id !== originalObject.id),
+	);
+	await page.reload();
+	await page.getByText("Studio confirmed the selected replacement saved.", { exact: true }).waitFor();
+	assert.equal(adapter.emitted.length, commandsBefore + 1, "Reload must not resubmit the card selection");
+	assert.equal(
+		await page.getByRole("button", { name: "Replace with this", exact: true }).count(),
+		0,
+		"Completed recommendations stay hidden after reload",
+	);
 	await mkdir("artifacts", { recursive: true });
 	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.locator("[data-catalog-id='yellow-bend']").scrollIntoViewIfNeeded();
+	await page.locator("[data-catalog-id='yellow-bend']").last().scrollIntoViewIfNeeded();
 	await page.screenshot({ path: "artifacts/chat-browser.png" });
 	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-desktop.png" });
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.locator("[data-catalog-id='yellow-bend']").scrollIntoViewIfNeeded();
+	await page.locator("[data-catalog-id='yellow-bend']").last().scrollIntoViewIfNeeded();
 	await page.screenshot({ path: "artifacts/chat-browser-mobile.png" });
 	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-mobile.png" });
 	assert.deepEqual(errors, []);
 	console.log(
-		"Browser verification passed: chat sidebar toggle, two chats, streaming, Stop, restart recovery, Studio panel toggle and attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, and catalog cards from saved details. Synthetic JSON saves only.",
+		"Browser verification passed: chat sidebar toggle, two chats, streaming, Stop, restart recovery, Studio panel toggle and attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, catalog cards from saved details, and selected replacement with pinned target and no reload resubmission. Synthetic JSON saves only.",
 	);
 } finally {
 	await browser.close();

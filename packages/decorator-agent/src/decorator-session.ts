@@ -5,13 +5,7 @@ import {
 	replicatedState,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-	AgentHarness,
-	type AgentLane,
-	DEFAULT_COMPACTION_SETTINGS,
-	HarnessClosed,
-	type Session,
-} from "@earendil-works/pi-agent-core";
+import { AgentHarness, type AgentLane, HarnessClosed, type Session } from "@earendil-works/pi-agent-core";
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
@@ -136,8 +130,9 @@ export class DecoratorSession implements RoutedSessionHandle {
 			models.setProvider(googleProvider());
 			registry = models;
 		}
-		const model = registry.getModel("google", options.modelId ?? "gemini-3.5-flash-lite");
-		if (!model) throw new Error(`Unknown Gemini model: ${options.modelId ?? "gemini-3.5-flash-lite"}`);
+		const modelId = options.modelId ?? "gemini-3.8-flash";
+		const model = registry.getModel("google", modelId);
+		if (!model) throw new Error(`Unknown Gemini model: ${modelId}`);
 		const studio = new StudioSessionRuntime(options.session, options.studio, options.onDebug);
 		let harness: AgentHarness<StudioToolContext> | undefined;
 		let runtime: DecoratorSession | undefined;
@@ -150,6 +145,7 @@ export class DecoratorSession implements RoutedSessionHandle {
 					session: options.session,
 					models: registry,
 					model,
+					thinkingLevel: "low",
 					tools,
 					activeToolNames: tools.map((tool) => tool.name),
 					toolExecution: "sequential",
@@ -160,11 +156,33 @@ export class DecoratorSession implements RoutedSessionHandle {
 					}),
 					resources: {},
 					systemPrompt: studioSystemPrompt,
-					compaction: { ...DEFAULT_COMPACTION_SETTINGS, enabled: false },
 				},
 				context,
 			);
 			harness = created.harness;
+			if (process.env.LIVI_DEBUG_PROMPTS === "1") {
+				harness.hooks.on("before_payload", ({ model, payload, runId }) => {
+					try {
+						console.error(
+							JSON.stringify(
+								{
+									timestamp: new Date().toISOString(),
+									event: "llm.request",
+									conversationId: options.session.metadata.id,
+									operationId: runId,
+									model: model.id,
+									payload,
+								},
+								null,
+								2,
+							),
+						);
+					} catch {
+						// Debug output must not interrupt a model request.
+					}
+					return undefined;
+				});
+			}
 			const { open } = created;
 			if (open.some((operation) => operation.lane !== "main"))
 				throw new Error("Decorator sessions support only the main lane");
@@ -289,9 +307,16 @@ function parsePromptAction(action: unknown): { value: AgentPromptAction | null }
 	if (record.type === "replace_asset") {
 		if (!requiredId(record.selectedProductId)) return { error: "replace_asset requires selectedProductId" };
 		if (!requiredId(record.targetObjectId)) return { error: "replace_asset requires targetObjectId" };
+		if (!requiredId(record.designId)) return { error: "replace_asset requires the recommendation designId" };
+		if (!requiredId(record.expectedRevision)) return { error: "replace_asset requires the recommendation revision" };
+		if (record.expectedCatalogId !== null && !requiredId(record.expectedCatalogId))
+			return { error: "replace_asset requires the prior catalog ID or null" };
 		return {
 			value: {
 				type: "replace_asset",
+				designId: record.designId,
+				expectedRevision: record.expectedRevision,
+				expectedCatalogId: record.expectedCatalogId,
 				selectedProductId: record.selectedProductId,
 				targetObjectId: record.targetObjectId,
 			},

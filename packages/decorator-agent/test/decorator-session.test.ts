@@ -9,6 +9,7 @@ const toolNames = [
 	"move_object",
 	"rotate_object",
 	"remove_object",
+	"replace_object",
 	"get_room_context",
 	"search_catalog",
 	"get_product_details",
@@ -21,13 +22,38 @@ async function fixture() {
 	const repo = new MemorySessionRepo();
 	cleanup.push(() => repo.close(context));
 	const stored = await repo.create({}, context);
-	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+	const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const runtime = await DecoratorSession.create({ session: stored, models });
 	cleanup.push(() => runtime.close());
 	return { repo, stored, faux, models, runtime };
 }
+
+it("sends supported low thinking to Gemini 3.8 without sampling overrides", async () => {
+	const repo = new MemorySessionRepo();
+	cleanup.push(() => repo.close(context));
+	const stored = await repo.create({}, context);
+	const runtime = await DecoratorSession.create({ session: stored, apiKey: "payload-test-only" });
+	cleanup.push(() => runtime.close());
+	let payload: unknown;
+	runtime.harness.hooks.on("before_payload", async (event) => {
+		payload = event.payload;
+		// Inspect the real provider request and stop before any network call.
+		await runtime.controller.requestAbort(event.runId, context);
+		return undefined;
+	});
+	expect(await runtime.controller.prompt({ message: "Hello" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	expect(payload).toMatchObject({
+		model: "gemini-3.8-flash",
+		config: { thinkingConfig: { thinkingLevel: "LOW" } },
+	});
+	expect(payload).not.toHaveProperty("config.temperature");
+	expect(payload).not.toHaveProperty("config.topP");
+	expect(payload).not.toHaveProperty("config.topK");
+	expect(payload).not.toHaveProperty("config.thinkingConfig.thinkingBudget");
+});
 
 it("returns durable admission while generation runs and survives caller cancellation", async () => {
 	const { runtime, faux } = await fixture();
@@ -55,7 +81,7 @@ it("returns durable admission while generation runs and survives caller cancella
 	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
 	expect(entries.filter((entry) => entry.type === "message" && entry.message.role === "user")).toHaveLength(1);
 	expect(entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant", stopReason: "stop" } });
-	expect(await runtime.harness.getCompactionSettings(context)).toMatchObject({ enabled: false });
+	expect(await runtime.harness.getCompactionSettings(context)).toMatchObject({ enabled: true });
 	expect(await runtime.harness.getResources(context)).toEqual({});
 });
 

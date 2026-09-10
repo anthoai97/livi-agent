@@ -75,6 +75,7 @@ textarea::placeholder { color: #92988a; }
 .catalog-card-details summary:focus-visible { outline: 2px solid #4b7258; outline-offset: 3px; }
 .catalog-card-details p { margin-top: 8px; overflow-wrap: anywhere; }
 .catalog-card-actions { margin-top: auto; padding-top: 4px; min-height: 50px; display: flex; flex-direction: column; gap: 4px; }
+.catalog-card-actions button { align-self: flex-start; padding: 5px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; }
 .catalog-card-price { margin: 0; color: #5b4dff; font-size: 16px; font-weight: 700; }
 .catalog-card-missing { margin: 0; color: #8b8f9a; font-size: 12px; }
 .catalog-card-link, .message .catalog-card-link { color: #5b4dff; font-size: 12px; font-weight: 600; text-decoration: none; margin-top: 2px; }
@@ -109,3 +110,5 @@ textarea::placeholder { color: #92988a; }
   .composer-actions small { max-width: 105px; line-height: 1.5; }
   .catalog-results { flex-direction: column; }
 }
+
+.message .message-metrics { margin: 12px 0 0; color: #738068; font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.5; }

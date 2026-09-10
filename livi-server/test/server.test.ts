@@ -98,7 +98,7 @@ test(
 		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-server-"));
 		const faux = fauxProvider({
 			provider: "google",
-			models: [{ id: "gemini-3.5-flash-lite" }],
+			models: [{ id: "gemini-3.8-flash" }],
 			tokensPerSecond: 100,
 			tokenSize: { min: 1, max: 1 },
 		});
@@ -249,7 +249,7 @@ test(
 		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-provider-fields-"));
 		const faux = fauxProvider({
 			provider: "google",
-			models: [{ id: "gemini-3.5-flash-lite" }],
+			models: [{ id: "gemini-3.8-flash" }],
 			tokensPerSecond: 100,
 			tokenSize: { min: 1, max: 1 },
 		});
@@ -348,7 +348,14 @@ test(
 		const room = await first.management.create({}, context);
 		const attached = await attach(first, room.sessionId);
 		const generating = once(child, "message");
-		const action = { type: "replace_asset" as const, selectedProductId: "sofa-123", targetObjectId: "sofa-placed" };
+		const action = {
+			type: "replace_asset" as const,
+			designId: "simulated-room",
+			expectedRevision: "1",
+			expectedCatalogId: null,
+			selectedProductId: "sofa-123",
+			targetObjectId: "sofa-placed",
+		};
 		const accepted = await attached.controller.prompt({ message: "Keep my room design", action }, context);
 		assert.equal(accepted.accepted, true);
 		assert.deepEqual((await generating)[0], { type: "generating" });
@@ -357,7 +364,7 @@ test(
 		await exited;
 		await first.client.dispose();
 
-		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.5-flash-lite" }] });
+		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
 		const models = createModels();
 		models.setProvider(faux.provider);
 		faux.setResponses([
@@ -366,7 +373,7 @@ test(
 					request.systemPrompt?.includes(JSON.stringify(action)),
 					"SQLite recovery must retain wire selection",
 				);
-				assert.ok(request.systemPrompt?.includes("Current request mutation block: true"));
+				assert.ok(request.systemPrompt?.includes("Interrupted-request replay blocked: true"));
 				return fauxAssistantMessage("Recovered room design");
 			},
 		]);
