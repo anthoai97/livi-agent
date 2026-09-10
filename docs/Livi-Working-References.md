@@ -1,7 +1,5 @@
 # Orchestrator capabilities and decorator plan
 
-Source inspected: 2026-09-08, pipeline `ab2af05`, decorator `77dc712`.
-
 ## Pipeline capabilities
 
 The orchestrator defines 15 routes:
@@ -31,21 +29,6 @@ Supporting capabilities:
 - Budget/fit warnings, user choices, and bounded layout repair.
 - Progress streaming, response cards, previews, and revision-aware persistence.
 - Room extraction/transfer and separate AI image polishing.
-
-Limits: finish routes return UI instructions rather than saving scene changes. Recommendations do not guarantee placement fit. Selection has living-room assumptions and budget tolerance. Fit confirmations are held in memory.
-
-## Implementation order
-
-1. **Richer context and typed actions:** product IDs, prices, finishes, preferences, and exact card selections.
-2. **Catalog search and recommendation cards:** browse real products without editing the room.
-3. **Selected-product add/replace:** exact targets, quantity, fit warnings, and Studio saves.
-4. **Surface edits:** wall, floor, and curtain finishes.
-5. **Layout analysis:** collision/clearance checks and coordinated corrections.
-6. **Layout options:** preview alternatives and apply a selected option after checking the room revision.
-7. **New-design generation:** furniture selection, layout generation/repair, and variants.
-8. **Later:** room import/transfer, image polishing, and broader undo/redo.
-
-Start with **1–3**: ask for products, compare options, select one, and save the addition or replacement in Studio.
 
 ## References
 
