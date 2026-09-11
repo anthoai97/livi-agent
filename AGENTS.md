@@ -29,6 +29,13 @@
 - When responding to user feedback or an analysis, explicitly say whether you agree or 
 disagree before saying what you changed.
 
+## Writing Issues
+
+- Keep issue titles and descriptions short, plain, and easy to understand.
+- Start with the user-facing problem or feature, then a few bullets describing expected behavior. Use concrete examples when helpful.
+- Leave implementation plans, code references, contract details, and extensive acceptance/test checklists for later unless explicitly requested.
+- Use `gh` to create and update issues under `anthoai97`.
+
 ## Code Quality
 
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
