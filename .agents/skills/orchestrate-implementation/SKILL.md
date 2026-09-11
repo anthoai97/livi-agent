@@ -65,4 +65,6 @@ If the user authorized draft PR publication, use `gh stack` to create a small fo
 
 The implementation agent returns changed files, behavior, tests/builds, commit/PR information, and limitations. The root verifies that handoff against the agreed acceptance criteria, resolves remaining work, and gives the user a concise final result. Do not stop at a plan or an agent's unsupported claim of completion.
 
+Every final development handoff includes a concise Markdown table with columns **Change** and **Related code**. Describe each meaningful behavior in plain language and link it to the relevant implementation file and verified line number. Use clickable absolute file targets, with readable repository-relative paths as labels; distinguish companion repositories when needed. Map behavior to code rather than listing every modified file. Follow the table with brief validation results and any material limitations or commit/PR status. Do not wait for the user to ask for the code mapping.
+
 After verifying the final handoffs, close the implementation and review panes created for this task with `herdr pane close <pane-id>` before the root's final response, unless the user asks to keep them open. Track returned pane IDs and verify closure. Keep the root pane and all pre-existing panes open.
