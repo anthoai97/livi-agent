@@ -38,7 +38,7 @@ disagree before saying what you changed.
 - Never remove or downgrade code to fix type errors from outdated deps; upgrade the dep instead.
 - Always ask before removing functionality or code that appears intentional.
 - Do not preserve backward compatibility unless the user asks for it.
-- Code refactor target for this scope only: livi-server, livi-agent/packages/decorator-agent
+- Code refactor target for this scope only if user do not have any specific asking: livi-server, packages/decorator-agent, scripts
 
 ## User Override
 

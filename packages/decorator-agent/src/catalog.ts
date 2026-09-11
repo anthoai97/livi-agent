@@ -257,27 +257,23 @@ function stableSourceUrl(value: unknown): string | null {
 	return trimmed;
 }
 
-export function httpUrl(value: unknown): string | null {
+function stableProtocolUrl(value: unknown, protocols: readonly string[]): string | null {
 	const trimmed = stableSourceUrl(value);
 	if (!trimmed) return null;
 	try {
-		const parsed = new URL(trimmed);
-		return parsed.protocol === "http:" || parsed.protocol === "https:" ? trimmed : null;
+		return protocols.includes(new URL(trimmed).protocol) ? trimmed : null;
 	} catch {
 		return null;
 	}
 }
 
+export function httpUrl(value: unknown): string | null {
+	return stableProtocolUrl(value, ["http:", "https:"]);
+}
+
 /** Stable source identity. Keeps s3:// and unsigned http(s); drops expiring signed URLs. */
 export function catalogImageRef(value: unknown): string | null {
-	const trimmed = stableSourceUrl(value);
-	if (!trimmed) return null;
-	try {
-		const parsed = new URL(trimmed);
-		return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "s3:" ? trimmed : null;
-	} catch {
-		return null;
-	}
+	return stableProtocolUrl(value, ["http:", "https:", "s3:"]);
 }
 
 export function sanitizeCatalogProduct(product: CatalogProduct): CatalogProduct {
@@ -419,33 +415,13 @@ export function catalogProductMatches(product: CatalogProduct, request: Normaliz
 	if (request.color && !tokenMatches([product.color, ...(product.availableColors ?? [])], request.color)) return false;
 	if (request.style && !tokenMatches([product.style], request.style)) return false;
 	if (request.material && !tokenMatches([product.materials], request.material)) return false;
-	if (
-		!dimensionMatches(
-			product.dimensions?.width ?? null,
-			request.minWidth,
-			request.maxWidth,
-			request.exclusiveMaxWidth,
-		)
-	)
-		return false;
-	if (
-		!dimensionMatches(
-			product.dimensions?.depth ?? null,
-			request.minDepth,
-			request.maxDepth,
-			request.exclusiveMaxDepth,
-		)
-	)
-		return false;
-	if (
-		!dimensionMatches(
-			product.dimensions?.height ?? null,
-			request.minHeight,
-			request.maxHeight,
-			request.exclusiveMaxHeight,
-		)
-	)
-		return false;
+	for (const [value, min, max, exclusiveMax] of [
+		[product.dimensions?.width ?? null, request.minWidth, request.maxWidth, request.exclusiveMaxWidth],
+		[product.dimensions?.depth ?? null, request.minDepth, request.maxDepth, request.exclusiveMaxDepth],
+		[product.dimensions?.height ?? null, request.minHeight, request.maxHeight, request.exclusiveMaxHeight],
+	] as const) {
+		if (!dimensionMatches(value, min, max, exclusiveMax)) return false;
+	}
 	if (request.minPrice || request.maxPrice) {
 		if (!product.price) return false;
 		const currency = product.price.currency.trim().toUpperCase();
@@ -622,22 +598,20 @@ export function mergeCatalogFollowUp(
 	const size = reference.dimensions?.[dimension] ?? null;
 	if (size === null)
 		throw new CatalogError("invalid_arguments", `The identified product has no verified ${dimension}`);
+	const axes = {
+		width: { max: "maxWidth", exclusive: "exclusiveMaxWidth" },
+		depth: { max: "maxDepth", exclusive: "exclusiveMaxDepth" },
+		height: { max: "maxHeight", exclusive: "exclusiveMaxHeight" },
+	} as const;
+	const axis = axes[dimension];
 	const request: CatalogSearchRequest = {
 		...base,
 		excludeIds: base.excludeIds,
 		offset: 0,
 		limit: prior.pagination.limit,
+		[axis.max]: Math.min(size, base[axis.max] ?? size),
+		[axis.exclusive]: size <= (base[axis.max] ?? size) || base[axis.exclusive],
 	};
-	if (dimension === "width") {
-		request.maxWidth = Math.min(size, base.maxWidth ?? size);
-		request.exclusiveMaxWidth = size <= (base.maxWidth ?? size) || base.exclusiveMaxWidth;
-	} else if (dimension === "depth") {
-		request.maxDepth = Math.min(size, base.maxDepth ?? size);
-		request.exclusiveMaxDepth = size <= (base.maxDepth ?? size) || base.exclusiveMaxDepth;
-	} else {
-		request.maxHeight = Math.min(size, base.maxHeight ?? size);
-		request.exclusiveMaxHeight = size <= (base.maxHeight ?? size) || base.exclusiveMaxHeight;
-	}
 	return { request, searchId: prior.searchId, shownIds: [] };
 }
 

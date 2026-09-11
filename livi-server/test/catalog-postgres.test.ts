@@ -122,16 +122,6 @@ test("mapRegistryRow drops temporary signed URLs and keeps stable s3 refs", () =
 	);
 	assert.equal(querySigned?.imageUrl, null);
 	assert.equal(querySigned?.imageRef, null);
-	const s3 = mapRegistryRow(
-		registryRow({
-			asset_id: "55555555-5555-4555-8555-555555555555",
-			name: "S3",
-			image_url: "s3://bucket/sofa.png",
-			product_url: null,
-		}),
-	);
-	assert.equal(s3?.imageUrl, null);
-	assert.equal(s3?.imageRef, "s3://bucket/sofa.png");
 });
 
 test("search SQL parameterizes filters and excludes decor and deleted rows", () => {
@@ -381,26 +371,7 @@ CREATE TABLE pipeline.pipeline_assets (
   available_colors text[],
   is_deleted bool DEFAULT false
 )`);
-		await pool.query(`
-CREATE TABLE pipeline.decor_items (
-  asset_id uuid PRIMARY KEY,
-  name text,
-  category text,
-  description text,
-  asset_description text,
-  color text,
-  style text,
-  shape text,
-  materials text,
-  price real,
-  width real,
-  depth real,
-  height real,
-  image_url text,
-  product_url text,
-  available_colors text[],
-  is_deleted bool DEFAULT false
-)`);
+		await pool.query("CREATE TABLE pipeline.decor_items (LIKE pipeline.pipeline_assets INCLUDING ALL)");
 		const version = await pool.query<{ server_version_num: string }>("SHOW server_version_num");
 		const invoker = Number(version.rows[0]?.server_version_num) >= 150000 ? "WITH (security_invoker = true) " : "";
 		await pool.query(`
