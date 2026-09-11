@@ -64,7 +64,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 2 },
+		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
 		context,
 	);
 	const state = {
@@ -108,7 +108,50 @@ async function adapter(broker: StudioBroker, stored: Session) {
 					status: "rejected",
 					error: { code: "stale_revision", message: "Room changed since planning" },
 				};
-			else {
+			else if (command.action.type === "add" || command.action.type === "duplicate") {
+				const action = command.action;
+				const source =
+					action.type === "duplicate"
+						? state.snapshot.objects.find((entry) => entry.id === action.sourceObjectId)
+						: undefined;
+				if (action.type === "duplicate" && !source)
+					result = {
+						commandId: command.commandId,
+						status: "rejected",
+						error: { code: "invalid_target", message: "Duplicate source does not exist" },
+					};
+				else {
+					const created = [];
+					for (let index = 0; index < action.quantity; index++) {
+						const objectId = `${command.commandId}:${index}`;
+						const transform = {
+							position: [2 + index * 0.25, 2, 0] as [number, number, number],
+							rotation: [...(source?.rotation ?? [0, 0, 0])] as [number, number, number],
+							scale: [...(source?.scale ?? [1, 1, 1])] as [number, number, number],
+						};
+						state.snapshot.objects.push({
+							id: objectId,
+							name: source?.name ?? (action.type === "add" ? action.catalogId : "copy"),
+							category: source?.category ?? "catalog",
+							dimensions: [...(source?.dimensions ?? [1, 1, 1])] as [number, number, number],
+							...transform,
+							product: source?.product
+								? structuredClone(source.product)
+								: { catalogId: action.type === "add" ? action.catalogId : "unknown", price: null },
+						});
+						created.push({ objectId, transform });
+					}
+					state.snapshot.revision = String(Number(state.snapshot.revision) + 1);
+					result = {
+						commandId: command.commandId,
+						status: "saved",
+						kind: "create",
+						revision: state.snapshot.revision,
+						snapshot: structuredClone(state.snapshot),
+						created,
+					};
+				}
+			} else {
 				const object = state.snapshot.objects.find((object) => object.id === command.objectId)!;
 				const before = {
 					position: [...object.position] as [number, number, number],
@@ -133,6 +176,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 				result = {
 					commandId: command.commandId,
 					status: "saved",
+					kind: "edit",
 					revision: state.snapshot.revision,
 					snapshot: structuredClone(state.snapshot),
 					before,
@@ -714,6 +758,8 @@ it("upgrades an old empty allowlist while keeping an admitted generation's captu
 				"rotate_object",
 				"remove_object",
 				"replace_object",
+				"add_object",
+				"duplicate_object",
 				"get_room_context",
 				"search_catalog",
 				"get_product_details",
@@ -1022,7 +1068,16 @@ it("never replays an old safe pending effect after restart, including model retr
 	const recoveredTools = await recovered.harness.getTools(context);
 	expect(
 		recoveredTools
-			.filter((tool) => ["move_object", "rotate_object", "remove_object", "get_room_context"].includes(tool.name))
+			.filter((tool) =>
+				[
+					"move_object",
+					"rotate_object",
+					"remove_object",
+					"add_object",
+					"duplicate_object",
+					"get_room_context",
+				].includes(tool.name),
+			)
 			.every((tool) => tool.replay === "never"),
 	).toBe(true);
 	expect(
@@ -1604,4 +1659,134 @@ it("restores a saved replacement from journal references after repeated compacti
 		reversesCommandId: original.command.commandId,
 	});
 	expect(fake.state.snapshot.objects[0]?.product?.catalogId).toBe("catalog-chair");
+});
+
+it("adds the admitted catalog product quantity with distinct created IDs and no fabricated before", async () => {
+	const { runtime, fake, faux } = await fixture();
+	const unrelated = structuredClone(room().objects[1]);
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Added two lamps"),
+	]);
+	expect(
+		(
+			await runtime.controller.prompt(
+				{
+					message: "Add two of this lamp",
+					action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 2 },
+				},
+				context,
+			)
+		).accepted,
+	).toBe(true);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(fake.state.commands[0]).toMatchObject({
+		expectedRevision: "1",
+		action: { type: "add", catalogId: "lamp-1", quantity: 2 },
+	});
+	expect(fake.state.commands[0]?.objectId).toBeUndefined();
+	const result = (await runtime.studio.journal.records())[0]?.result;
+	expect(result).toMatchObject({ status: "saved", kind: "create" });
+	if (result?.status !== "saved" || result.kind !== "create") throw new Error("expected create result");
+	expect(result.created).toHaveLength(2);
+	expect(new Set(result.created.map((item) => item.objectId)).size).toBe(2);
+	expect("before" in result).toBe(false);
+	expect(fake.state.snapshot.objects[1]).toEqual(unrelated);
+});
+
+it("duplicates one source without changing it and ignores later undo of an older move", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Moved"),
+		fauxAssistantMessage(fauxToolCall("duplicate_object", { objectId: "chair-1", quantity: 1 }), {
+			stopReason: "toolUse",
+		}),
+		(input) => {
+			expect(input.systemPrompt).toContain('"action":"duplicate"');
+			expect(input.systemPrompt).toContain("never skip");
+			return fauxAssistantMessage("Copied the chair");
+		},
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	await prompt(runtime, "Duplicate this chair");
+	await runtime.lane.waitForIdle(context);
+	const source = fake.state.snapshot.objects.find((object) => object.id === "chair-1")!;
+	expect(source.position).toEqual([2, 2, 0]);
+	expect(fake.state.commands[1]).toMatchObject({
+		action: { type: "duplicate", sourceObjectId: "chair-1", quantity: 1 },
+	});
+	expect(fake.state.commands[1]?.objectId).toBeUndefined();
+	expect(
+		fake.state.snapshot.objects.filter((object) => object.id !== "chair-1" && object.id !== "chair-2"),
+	).toHaveLength(1);
+});
+
+it.each([
+	["add_object", {}],
+	["add_object", { catalogId: "invented-lamp", quantity: 1 }],
+	["duplicate_object", {}],
+	["duplicate_object", { objectId: "missing-chair" }],
+])("rejects invalid %s without mutation", async (name, args) => {
+	const { runtime, fake, faux } = await fixture();
+	fake.state.snapshot.selectedObjectIds = [];
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Please clarify"),
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot.objects).toEqual(room().objects);
+});
+
+it("refreshes a stale add and retries the admitted product against the current revision", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		() => {
+			fake.state.snapshot.revision = "2";
+			return fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("stale_revision");
+			return fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" });
+		},
+		fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Added the lamp"),
+	]);
+	await runtime.controller.prompt(
+		{
+			message: "Add this lamp",
+			action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 1 },
+		},
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "2"]);
+	expect(fake.state.commands.map((command) => command.action)).toEqual([
+		{ type: "add", catalogId: "lamp-1", quantity: 1 },
+		{ type: "add", catalogId: "lamp-1", quantity: 1 },
+	]);
+});
+
+it("refuses add reversal through originalCommandId without mutation", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("add_object", { originalCommandId: "saved-add" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Additions cannot be reversed"),
+	]);
+	await runtime.controller.prompt(
+		{
+			message: "Add this lamp",
+			action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 1 },
+		},
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot.objects).toEqual(room().objects);
 });

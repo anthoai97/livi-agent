@@ -1,6 +1,14 @@
 import { readFile } from "node:fs/promises";
 import type { StudioSnapshot } from "../../packages/decorator-agent/src/services/studio.js";
 
+export interface JsonCatalogFact {
+	catalogId: string;
+	name: string;
+	category: string;
+	dimensions: [number, number, number];
+	price: { amountMinor: number; currency: string } | null;
+}
+
 export interface RoomFixture {
 	provenance: "synthetic" | "database-export";
 	sourceDescription: string;
@@ -11,6 +19,7 @@ export interface RoomFixture {
 		rotation: "XYZ radians; yaw only";
 	};
 	snapshot: StudioSnapshot;
+	catalog?: JsonCatalogFact[];
 }
 
 function object(value: unknown, path: string): Record<string, unknown> {
@@ -121,5 +130,19 @@ export async function readRoom(path: string): Promise<RoomFixture> {
 			"Fixture: explicitly mapped manifest coordinate conventions required; see docs/Studio-Contract.md",
 		);
 	validateSnapshot(fixture.snapshot);
+	if (fixture.catalog !== undefined) {
+		if (!Array.isArray(fixture.catalog)) throw new Error("Fixture: catalog must be an array when present");
+		const ids = new Set<string>();
+		for (const entry of fixture.catalog) {
+			const product = object(entry, "catalog product");
+			string(product.catalogId, "catalog.catalogId");
+			if (ids.has(product.catalogId)) throw new Error(`Fixture: duplicate catalog ID ${product.catalogId}`);
+			ids.add(product.catalogId);
+			string(product.name, "catalog.name");
+			string(product.category, "catalog.category");
+			vector(product.dimensions, "catalog.dimensions");
+			if (product.price !== null) money(product.price, "catalog.price");
+		}
+	}
 	return value as RoomFixture;
 }

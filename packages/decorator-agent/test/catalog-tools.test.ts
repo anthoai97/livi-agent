@@ -154,7 +154,7 @@ async function attachStudio(broker: StudioBroker) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 2 },
+		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
 		context,
 	);
 	const state = {
@@ -203,6 +203,7 @@ async function attachStudio(broker: StudioBroker) {
 		const result: StudioCommandResult = {
 			commandId: command.commandId,
 			status: "saved",
+			kind: "edit",
 			revision: state.snapshot.revision,
 			snapshot: structuredClone(state.snapshot),
 			before,
@@ -624,6 +625,17 @@ it("keeps catalog follow-up state isolated by conversation", async () => {
 	await first.runtime.lane.waitForIdle(context);
 	expect(await second.runtime.controller.prompt({ message: "Show more" }, context)).toMatchObject({ accepted: true });
 	await second.runtime.lane.waitForIdle(context);
+});
+
+it("records requested quantity from the original add prompt", async () => {
+	const { runtime, faux } = await session({ catalog: createMemoryCatalogAccess(catalogProducts) });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { query: "lamps" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Lamps to add."),
+	]);
+	expect(await runtime.controller.prompt({ message: "Add two lamps" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	expect(searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context))?.requestedQuantity).toBe(2);
 });
 
 it("mergeCatalogFollowUp keeps filters and applies cheaper or smaller bounds", () => {

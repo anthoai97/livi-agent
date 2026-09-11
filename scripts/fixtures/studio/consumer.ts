@@ -2,6 +2,7 @@ import { Client } from "@earendil-works/pi-client";
 import {
 	STUDIO_CONTRACT_VERSION,
 	type StudioCommand,
+	type StudioCommandResult,
 	StudioConnection,
 	type StudioSnapshot,
 } from "@livi/studio-contracts";
@@ -42,11 +43,31 @@ const command: StudioCommand = {
 	objectId: "placed-chair-1",
 	action: { type: "replace", catalogId: "new-catalog-chair", expectedCatalogId: "catalog-chair" },
 };
+const addition: StudioCommand = {
+	commandId: "example-add",
+	conversationId: "example-chat",
+	binding: command.binding,
+	expectedRevision: snapshot.revision,
+	action: { type: "add", catalogId: "catalog-chair", quantity: 2 },
+};
+const creation: StudioCommandResult = {
+	commandId: addition.commandId,
+	status: "saved",
+	kind: "create",
+	revision: "saved-revision",
+	snapshot,
+	created: [
+		{ objectId: "new-chair-1", transform: { position: [2, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+		{ objectId: "new-chair-2", transform: { position: [3, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+	],
+};
 console.log(
 	STUDIO_CONTRACT_VERSION,
 	StudioConnection,
 	typeof Client,
 	command.action,
+	addition.action,
+	creation.created,
 	snapshot.budget,
 	snapshot.objects[0]?.product,
 );

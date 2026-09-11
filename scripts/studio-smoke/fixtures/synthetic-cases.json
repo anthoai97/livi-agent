@@ -215,11 +215,18 @@
         }
       },
       "expect": {
-        "commands": [],
+        "commands": [
+          {
+            "action": "move",
+            "objectId": "chair-red-1",
+            "status": "rejected",
+            "position": [1, 1, 0]
+          }
+        ],
         "json": [
           {
-            "path": "",
-            "unchanged": true
+            "path": "/objects/0/position",
+            "equals": [2, 1, 0]
           }
         ],
         "toolErrorIncludes": "stale_revision"
@@ -455,6 +462,221 @@
         ]
       },
       "reloadAdapterAfter": true
+    },
+    {
+      "id": "add-reload",
+      "prompt": "Add two of this lamp.",
+      "action": {
+        "type": "add_asset",
+        "selectedProductId": "lamp-1",
+        "quantity": 2
+      },
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Added two lamps.",
+        "call": {
+          "name": "add_object",
+          "arguments": {}
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "add",
+            "catalogId": "lamp-1",
+            "quantity": 2,
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/1/name",
+            "equals": "Floor lamp"
+          },
+          {
+            "path": "/objects/1/category",
+            "equals": "lamp"
+          },
+          {
+            "path": "/objects/1/product/catalogId",
+            "equals": "lamp-1"
+          },
+          {
+            "path": "/objects/1/dimensions",
+            "equals": [0.4, 0.4, 1.5]
+          }
+        ]
+      },
+      "reloadAdapterAfter": true
+    },
+    {
+      "id": "duplicate-reload",
+      "prompt": "Duplicate the Blue chair.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Copied the Blue chair.",
+        "call": {
+          "name": "duplicate_object",
+          "arguments": {
+            "objectId": "chair-blue-2",
+            "quantity": 1
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "duplicate",
+            "sourceObjectId": "chair-blue-2",
+            "quantity": 1,
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/3/name",
+            "equals": "Blue chair"
+          },
+          {
+            "path": "/objects/3/category",
+            "equals": "chair"
+          },
+          {
+            "path": "/objects/3/product/catalogId",
+            "equals": "same-chair-product"
+          },
+          {
+            "path": "/objects/3/product/price",
+            "equals": null
+          }
+        ]
+      },
+      "reloadAdapterAfter": true
+    },
+    {
+      "id": "add-unknown-product",
+      "prompt": "Add a missing product.",
+      "action": {
+        "type": "add_asset",
+        "selectedProductId": "no-such-product",
+        "quantity": 1
+      },
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "That catalog product is not available.",
+        "call": {
+          "name": "add_object",
+          "arguments": {}
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "add",
+            "catalogId": "no-such-product",
+            "quantity": 1,
+            "status": "rejected"
+          }
+        ],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ],
+        "toolErrorIncludes": "invalid_arguments"
+      }
+    },
+    {
+      "id": "add-save-failed",
+      "prompt": "Add this lamp.",
+      "action": {
+        "type": "add_asset",
+        "selectedProductId": "lamp-1",
+        "quantity": 1
+      },
+      "selectedObjectIds": [],
+      "failNextSave": true,
+      "injected": {
+        "text": "Studio could not save the lamp.",
+        "call": {
+          "name": "add_object",
+          "arguments": {}
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "add",
+            "catalogId": "lamp-1",
+            "quantity": 1,
+            "status": "rejected"
+          }
+        ],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ],
+        "toolErrorIncludes": "save_rejected"
+      }
+    },
+    {
+      "id": "add-drop-reply-restart",
+      "prompt": "Add this lamp again.",
+      "action": {
+        "type": "add_asset",
+        "selectedProductId": "lamp-1",
+        "quantity": 1
+      },
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Studio disconnected before a result arrived. Check the room before requesting another edit.",
+        "call": {
+          "name": "add_object",
+          "arguments": {}
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "add",
+            "catalogId": "lamp-1",
+            "quantity": 1,
+            "status": "saved"
+          }
+        ],
+        "json": []
+      },
+      "dropReplyAndRestart": true
+    },
+    {
+      "id": "add-stop-before-dispatch",
+      "prompt": "Add this lamp now.",
+      "action": {
+        "type": "add_asset",
+        "selectedProductId": "lamp-1",
+        "quantity": 1
+      },
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "",
+        "call": {
+          "name": "add_object",
+          "arguments": {}
+        }
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ]
+      },
+      "stop": "before_dispatch"
     },
     {
       "id": "removal-not-reversible",

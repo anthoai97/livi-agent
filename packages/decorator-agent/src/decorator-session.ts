@@ -11,7 +11,7 @@ import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import type { RoutedSessionAttachment, RoutedSessionHandle } from "@earendil-works/pi-server";
 import { type CatalogAccess, unavailableCatalogAccess } from "./catalog.ts";
 import { AgentController, type AgentPromptAction } from "./services/agent-controller.ts";
-import { StudioSession } from "./services/studio.ts";
+import { STUDIO_QUANTITY_MAX, StudioSession } from "./services/studio.ts";
 import { Transcript } from "./services/transcript.ts";
 import { createTranscriptService } from "./services/transcript-provider.ts";
 import type { StudioBroker } from "./studio-broker.ts";
@@ -296,6 +296,8 @@ function parsePromptAction(action: unknown): { value: AgentPromptAction | null }
 		if (!requiredId(record.selectedProductId)) return { error: "add_asset requires selectedProductId" };
 		if (typeof record.quantity !== "number" || !Number.isSafeInteger(record.quantity) || record.quantity < 1)
 			return { error: "add_asset quantity must be a positive integer" };
+		if (record.quantity > STUDIO_QUANTITY_MAX)
+			return { error: `add_asset quantity must be at most ${STUDIO_QUANTITY_MAX}` };
 		return {
 			value: { type: "add_asset", selectedProductId: record.selectedProductId, quantity: record.quantity },
 		};

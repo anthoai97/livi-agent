@@ -35,7 +35,7 @@ const snapshot: StudioSnapshot = {
 async function adapter(broker: StudioBroker, tabId = "tab-a", designId = "design-a") {
 	const attachment = broker.attach();
 	const { generation } = await attachment.service.register(
-		{ tabId, designId, label: tabId, contractVersion: 2 },
+		{ tabId, designId, label: tabId, contractVersion: 3 },
 		context,
 	);
 	await attachment.service.ready(generation, context);
@@ -61,6 +61,7 @@ function saved(): StudioCommandResult {
 	return {
 		commandId: "command-a",
 		status: "saved",
+		kind: "edit",
 		revision: "saved-2",
 		snapshot: { ...structuredClone(snapshot), revision: "saved-2", objects: [after] },
 		before,
@@ -179,7 +180,7 @@ test("selection before the first snapshot stays ready and only an explicit read 
 	const connection = broker.attach();
 	const binding = { tabId: "tab-a", designId: "design-a" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Studio", contractVersion: 2 },
+		{ ...binding, label: "Studio", contractVersion: 3 },
 		context,
 	);
 	await connection.service.ready(generation, context);

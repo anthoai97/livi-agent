@@ -430,7 +430,7 @@ test(
 		const directory = remote.use(StudioDirectory);
 		await remote.ready(context);
 		const { generation } = await studio.register(
-			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 2 },
+			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 3 },
 			context,
 		);
 		await studio.ready(generation, context);
