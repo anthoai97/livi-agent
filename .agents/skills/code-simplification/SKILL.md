@@ -1,6 +1,6 @@
 ---
 name: code-simplification
-description: Simplifies code for clarity. Use when refactoring code for clarity without changing behavior. Use when code works but is harder to read, maintain, or extend than it should be. Use when reviewing code that has accumulated unnecessary complexity.
+description: Simplify code without changing behavior. Use for requested simplification or cleanup necessary for the active task.
 ---
 
 # Code Simplification
@@ -13,12 +13,10 @@ Simplify code by reducing complexity while preserving exact behavior. The goal i
 
 ## When to Use
 
-- After a feature is working and tests pass, but the implementation feels heavier than it needs to be
-- During code review when readability or complexity issues are flagged
-- When you encounter deeply nested logic, long functions, or unclear names
-- When refactoring code written under time pressure
-- When consolidating related logic scattered across files
-- After merging changes that introduced duplication or inconsistency
+- For requested behavior-preserving simplification of specified code
+- For cleanup necessary to complete the active task
+
+Review requests produce findings; edit only when requested.
 
 **When NOT to use:**
 
@@ -38,7 +36,7 @@ ASK BEFORE EVERY CHANGE:
 → Does this produce the same output for every input?
 → Does this maintain the same error behavior?
 → Does this preserve the same side effects and ordering?
-→ Do all existing tests still pass without modification?
+→ Does existing test coverage still validate the same behavior without weakened assertions?
 ```
 
 ### 2. Follow Project Conventions
@@ -46,7 +44,7 @@ ASK BEFORE EVERY CHANGE:
 Simplification means making code more consistent with the codebase, not imposing external preferences. Before simplifying:
 
 ```
-1. Read CLAUDE.md / project conventions
+1. Use applicable conventions already loaded; read additional guidance only when relevant and missing
 2. Study how neighboring code handles similar patterns
 3. Match the project's style for:
    - Import ordering and module system
@@ -115,7 +113,7 @@ BEFORE SIMPLIFYING, ANSWER:
 - What are the edge cases and error paths?
 - Are there tests that define the expected behavior?
 - Why might it have been written this way? (Performance? Platform constraint? Historical reason?)
-- Check git blame: what was the original context for this code?
+- Check history when code, callers, tests, and comments leave intent unclear
 ```
 
 If you can't answer these, you're not ready to simplify. Read more context first.
@@ -140,7 +138,7 @@ Scan for these patterns — each one is a concrete signal, not a vague smell:
 |---------|--------|----------------|
 | Generic names | `data`, `result`, `temp`, `val`, `item` | Rename to describe the content: `userProfile`, `validationErrors` |
 | Abbreviated names | `usr`, `cfg`, `btn`, `evt` | Use full words unless the abbreviation is universal (`id`, `url`, `api`) |
-| Misleading names | Function named `get` that also mutates state | Rename to reflect actual behavior |
+| Misleading names | Function named `get` that also mutates state | Suggest clearer function names where project conventions permit renaming |
 | Comments explaining "what" | `// increment counter` above `count++` | Delete the comment — the code is clear enough |
 | Comments explaining "why" | `// Retry because the API is flaky under load` | Keep these — they carry intent the code can't express |
 
@@ -156,17 +154,9 @@ Scan for these patterns — each one is a concrete signal, not a vague smell:
 
 ### Step 3: Apply Changes Incrementally
 
-Make one simplification at a time. Run tests after each change. **Submit refactoring changes separately from feature or bug fix changes.** A PR that refactors and adds a feature is two PRs — split them.
+Work in small coherent batches. Separate substantial independent refactors; keep small cleanup necessary for the requested change together.
 
-```
-FOR EACH SIMPLIFICATION:
-1. Make the change
-2. Run the test suite
-3. If tests pass → commit (or continue to next simplification)
-4. If tests fail → revert and reconsider
-```
-
-Avoid batching multiple simplifications into a single untested change. If something breaks, you need to know which simplification caused it.
+Use the verification guidance below for each batch. If a check fails, diagnose it, fix or revert regressions caused by the simplification, and rerun affected checks.
 
 **The Rule of 500:** If a refactoring would touch more than 500 lines, invest in automation (codemods, sed scripts, AST transforms) rather than making the changes by hand. Manual edits at that scale are error-prone and exhausting to review.
 
@@ -303,8 +293,8 @@ function UserBadge({ user }: Props) {
 | "I'll just quickly simplify this unrelated code too" | Unscoped simplification creates noisy diffs and risks regressions in code you didn't intend to change. Stay focused. |
 | "The types make it self-documenting" | Types document structure, not intent. A well-named function explains *why* better than a type signature explains *what*. |
 | "This abstraction might be useful later" | Don't preserve speculative abstractions. If it's not used now, it's complexity without value. Remove it and re-add when needed. |
-| "The original author must have had a reason" | Maybe. Check git blame — apply Chesterton's Fence. But accumulated complexity often has no reason; it's just the residue of iteration under pressure. |
-| "I'll refactor while adding this feature" | Separate refactoring from feature work. Mixed changes are harder to review, revert, and understand in history. |
+| "The original author must have had a reason" | Understand the current behavior; consult history when code, callers, tests, and comments leave intent unclear. |
+| "I'll refactor while adding this feature" | Separate substantial independent refactors; keep small cleanup necessary for the requested change together. |
 
 ## Red Flags
 
@@ -318,14 +308,13 @@ function UserBadge({ user }: Props) {
 
 ## Verification
 
+Run tests appropriate to the change and complete required checks, including relevant builds and linting. Once those pass, broaden or repeat testing only when new changes, failures, or unresolved concerns justify it. Preserve assertions covering expected behavior.
+
 After completing a simplification pass:
 
-- [ ] All existing tests pass without modification
-- [ ] Build succeeds with no new warnings
-- [ ] Linter/formatter passes (no style regressions)
 - [ ] Each simplification is a reviewable, incremental change
 - [ ] The diff is clean — no unrelated changes mixed in
-- [ ] Simplified code follows project conventions (checked against CLAUDE.md or equivalent)
+- [ ] Simplified code follows applicable project conventions
 - [ ] No error handling was removed or weakened
 - [ ] No dead code was left behind (unused imports, unreachable branches)
 - [ ] A teammate or review agent would approve the change as a net improvement

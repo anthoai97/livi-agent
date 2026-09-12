@@ -1,6 +1,6 @@
 ---
 name: orchestrate-implementation
-description: Delegate implementation through Herdr while the root inspects integration points and verifies the result. Use when the user requests implementation agents or this workflow.
+description: Delegate implementation through Herdr. Use when the user explicitly requests implementation through Herdr or invokes this skill.
 ---
 
 # Orchestrate implementation
@@ -10,8 +10,8 @@ Use a root orchestrator and one implementation agent in Herdr. Invoking this ski
 ## Set up and assign
 
 - Read applicable repository instructions and inspect the working tree, branch, HEAD, and relevant PR/stack state. Preserve unrelated changes and capture the requested behavior and constraints.
-- Load the Herdr skill, verify `HERDR_ENV=1`, and discover the CLI and actual root pane. Create a sibling pane in the same directory without changing focus. Follow Herdr's readiness and prompt-delivery guidance; track every pane created for cleanup.
-- If Herdr is unavailable, report the limitation and continue useful local inspection. Ask about an alternative only if delegation remains blocked; do not silently switch tools.
+- Load the Herdr skill, verify `HERDR_ENV=1`, and discover the CLI and actual root pane. Create a sibling pane in the same directory by default, without changing focus. Follow Herdr's readiness and prompt-delivery guidance; track every pane created for cleanup.
+- If Herdr is unavailable, stop Herdr operations, report the limitation, and continue other authorized work. Ask before substituting another implementation backend when the user required Herdr.
 - Give the implementation agent ownership of implementation and relevant tests, docs, and builds. The root independently inspects companion code or integration points and resolves boundary questions. Add agents only for concrete independent work; avoid overlapping edits.
 - Assign one owner for Git mutations in a shared checkout. Use separate worktrees when writers need independent branches.
 
