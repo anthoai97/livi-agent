@@ -759,6 +759,58 @@ it("refinements reset traversal exclusions while keeping intentional exclusions 
 	expect(() => mergeCatalogFollowUp(otherCurrency, "cheaper")).toThrow(/currency/);
 });
 
+it("searches coffee table replacements with an exact target despite a typo in the request", async () => {
+	const coffeeTable = product("replacement-coffee-table", { name: "Oak Coffee Table", category: "coffee_table" });
+	const catalog = createMemoryCatalogAccess([...catalogProducts, coffeeTable]);
+	const { runtime, fake } = await session({ catalog, studio: true });
+	const snapshot = structuredClone(fake!.state.snapshot);
+	snapshot.objects.push({
+		...snapshot.objects[0]!,
+		id: "coffee_table_1640",
+		name: "coffee_table_1950",
+		category: "coffee_table",
+		product: { catalogId: "current-coffee-table", price: null },
+	});
+	snapshot.selectedObjectIds = [];
+	const originalQuery = "I want to replace the coffe table give me some table otpions";
+	const tool = createStudioTools().find((entry) => entry.name === "search_catalog")!;
+	const services = {
+		studio: runtime.studio,
+		catalog,
+		planning: {
+			operationId: "operation",
+			turnId: "turn",
+			binding: fake!.binding,
+			snapshot,
+			action: null,
+			unavailable: null,
+			originalQuery,
+		},
+	};
+	const args = { purpose: "replacement" as const, query: "coffee table options", category: "coffee_table" };
+	const result = await tool.execute(
+		"call",
+		{ ...args, targetObjectId: "coffee_table_1640" },
+		() => {},
+		services,
+		invocation,
+		context,
+	);
+	const details = result.details as CatalogRecommendationDetails;
+	expect(details.products.map((entry) => entry.catalogId)).toEqual([coffeeTable.catalogId]);
+	expect(details.resolvedConstraints).toMatchObject({
+		originalQuery,
+		purpose: "replacement",
+		target: { objectId: "coffee_table_1640", catalogId: "current-coffee-table", category: "coffee_table" },
+		excludeIds: ["current-coffee-table"],
+	});
+	await expect(
+		tool.execute("call", { ...args, targetObjectId: "missing-table" }, () => {}, services, invocation, context),
+	).rejects.toThrow(/invalid_arguments/);
+	expect(fake!.state.commands).toEqual([]);
+	expect(await runtime.studio.journal.records()).toEqual([]);
+});
+
 it("rejects missing named sofa and an explicit target that conflicts with the named sofa", async () => {
 	for (const missing of [true, false]) {
 		const { runtime, fake } = await session({ catalog: createMemoryCatalogAccess(catalogProducts), studio: true });

@@ -286,10 +286,7 @@ try {
 	await page.getByText("Here are lamps you can add.", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
 	const addCard = page.locator("[data-catalog-id='yellow-haven']").last();
-	assert.equal(
-		await addCard.getByRole("spinbutton", { name: "Quantity for Haven Yellow Sectional Sofa" }).inputValue(),
-		"2",
-	);
+	assert.equal(await addCard.getByRole("spinbutton").count(), 0);
 	faux.appendResponses([
 		(input) => {
 			assert.ok(input.systemPrompt?.includes(`"selectedProductId":"yellow-haven"`));

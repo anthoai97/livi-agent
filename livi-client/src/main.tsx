@@ -691,17 +691,17 @@ function CatalogCards({
 	disabled: boolean;
 }) {
 	const target = details.resolvedConstraints.target;
+	const quantity = details.requestedQuantity ?? 1;
 	return (
 		<ul className="catalog-results" aria-label="Catalog recommendations">
 			{details.products.map((product) => (
 				<CatalogCard
 					key={product.catalogId}
 					product={sanitizeCatalogProduct(product)}
-					requestedQuantity={details.requestedQuantity}
 					disabled={disabled}
 					onAdd={
 						designId
-							? (quantity) =>
+							? () =>
 									onAdd(
 										{ type: "add_asset", selectedProductId: product.catalogId, quantity },
 										`Add ${quantity} ${sanitizeCatalogProduct(product).name} to the room.`,
@@ -734,21 +734,14 @@ function CatalogCard({
 	product,
 	onReplace,
 	onAdd,
-	requestedQuantity,
 	disabled,
 }: {
 	product: CatalogProduct;
 	onReplace: (() => void) | undefined;
-	onAdd: ((quantity: number) => void) | undefined;
-	requestedQuantity?: number;
+	onAdd: (() => void) | undefined;
 	disabled: boolean;
 }) {
 	const [imageFailed, setImageFailed] = useState(false);
-	const [quantityText, setQuantityText] = useState(
-		String(requestedQuantity && requestedQuantity >= 1 ? requestedQuantity : 1),
-	);
-	const quantity = Number(quantityText);
-	const quantityValid = Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= 50;
 	const price = product.price ? formatCatalogPrice(product.price) : null;
 	const dimensions = formatDimensions(product);
 	const reason = product.reasons[0];
@@ -782,22 +775,7 @@ function CatalogCard({
 						<p className="catalog-card-missing">Price unavailable</p>
 					)}
 					{onAdd ? (
-						<label className="catalog-card-quantity">
-							Quantity
-							<input
-								type="number"
-								min={1}
-								max={50}
-								step={1}
-								value={quantityText}
-								disabled={disabled}
-								aria-label={`Quantity for ${product.name}`}
-								onChange={(event) => setQuantityText(event.target.value)}
-							/>
-						</label>
-					) : null}
-					{onAdd ? (
-						<button type="button" disabled={disabled || !quantityValid} onClick={() => onAdd(quantity)}>
+						<button type="button" disabled={disabled} onClick={onAdd}>
 							Add to room
 						</button>
 					) : null}

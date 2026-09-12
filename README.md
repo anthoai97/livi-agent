@@ -13,7 +13,7 @@ cp -n .env.example .env
 pnpm dev
 ```
 
-Open http://127.0.0.1:5173. For the built app, run `pnpm build` then `pnpm start` and open http://127.0.0.1:3001.
+Open http://127.0.0.1:5173. Run `pnpm start` to build and serve the app at http://127.0.0.1:3001.
 
 Optional settings in `.env`:
 

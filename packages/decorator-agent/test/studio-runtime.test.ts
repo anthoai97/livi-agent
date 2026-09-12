@@ -3,6 +3,7 @@ import { MemorySessionRepo, operationState, type Session } from "@earendil-works
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { convertTools } from "@earendil-works/pi-ai/api/google-shared";
 import { afterEach, expect, it, vi } from "vitest";
+import { type CatalogAccess, createMemoryCatalogAccess } from "../src/catalog.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
 import type {
 	StudioCommand,
@@ -233,7 +234,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 	};
 }
 
-async function fixture(onDebug?: (event: string, fields: Record<string, unknown>) => void) {
+async function fixture(onDebug?: (event: string, fields: Record<string, unknown>) => void, catalog?: CatalogAccess) {
 	const repo = new MemorySessionRepo();
 	cleanup.push(() => repo.close(context));
 	const stored = await repo.create({}, context);
@@ -247,6 +248,7 @@ async function fixture(onDebug?: (event: string, fields: Record<string, unknown>
 		session: stored,
 		models,
 		studio: broker,
+		catalog,
 		onError: (error) => errors.push(error),
 		onDebug,
 	});
@@ -1790,3 +1792,67 @@ it("refuses add reversal through originalCommandId without mutation", async () =
 	expect(fake.state.commands).toEqual([]);
 	expect(fake.state.snapshot.objects).toEqual(room().objects);
 });
+
+it.each(["verified", "missing", "different"])(
+	"adds only the exact product verified by a successful details lookup: %s",
+	async (scenario) => {
+		const catalog = createMemoryCatalogAccess([
+			{
+				catalogId: "remembered-sofa",
+				name: "Previous sofa",
+				category: "sofa",
+				dimensions: { width: 2, depth: 1, height: 1, unit: "m" },
+				imageUrl: null,
+				productUrl: null,
+				imageRef: null,
+				price: null,
+				style: null,
+				color: null,
+				materials: null,
+				shape: null,
+				availableColors: null,
+				description: null,
+				reasons: [],
+			},
+		]);
+		const search = vi.spyOn(catalog, "search");
+		const lookup = vi.spyOn(catalog, "getProduct");
+		const { runtime, fake, faux } = await fixture(undefined, catalog);
+		const catalogId = scenario === "different" ? "unverified-sofa" : "remembered-sofa";
+		faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("get_product_details", {
+					catalogId: scenario === "missing" ? "missing-sofa" : "remembered-sofa",
+				}),
+				{ stopReason: "toolUse" },
+			),
+			(input) => {
+				const result = input.messages.findLast(
+					(message) => message.role === "toolResult" && message.toolName === "get_product_details",
+				);
+				expect(result).toMatchObject({ isError: scenario === "missing" });
+				return fauxAssistantMessage(fauxToolCall("add_object", { catalogId, quantity: 1 }), {
+					stopReason: "toolUse",
+				});
+			},
+			(input) => {
+				const result = input.messages.findLast(
+					(message) => message.role === "toolResult" && message.toolName === "add_object",
+				);
+				expect(result).toMatchObject({ isError: scenario !== "verified" });
+				return fauxAssistantMessage(
+					scenario === "verified" ? "Added the previous sofa" : "Product could not be verified",
+				);
+			},
+		]);
+		await prompt(runtime, "Yes, bring back the previous sofa");
+		await runtime.lane.waitForIdle(context);
+		expect(lookup).toHaveBeenCalledTimes(1);
+		expect(search).not.toHaveBeenCalled();
+		expect(fake.state.commands).toHaveLength(scenario === "verified" ? 1 : 0);
+		if (scenario === "verified") {
+			expect(fake.state.commands[0]?.action).toEqual({ type: "add", catalogId: "remembered-sofa", quantity: 1 });
+			expect((await runtime.studio.journal.records())[0]?.result).toMatchObject({ status: "saved", kind: "create" });
+		} else expect(fake.state.snapshot.objects).toEqual(room().objects);
+	},
+);
