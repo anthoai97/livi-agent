@@ -32,7 +32,7 @@ Embedding has a 30-second deadline; each database request has an eight-second de
 
 Errors distinguish `query_failed`, `unauthorized`, `model_failed`, `timeout`, and `cancelled` from successful empty results. Missing Studio context is a separate preflight failure.
 
-`LIVI_DEBUG=1` logs search and embed/retrieve stages with a shared `requestId`, timings, counts, pagination, and safe error codes. It omits raw queries, SQL, catalog facts, provider responses, and credentials. This ID differs from tool `invocationId` and saved `searchId`; preflight failures and `get_product_details` may have no search-stage logs.
+`LIVI_DEBUG=1` logs readable search and embed/retrieve steps with timestamps, timings, counts, pagination, and safe error codes. It omits tracing IDs, raw queries, SQL, catalog facts, provider responses, and credentials. Preflight failures and `get_product_details` may have no search-stage logs.
 
 ## Implementation
 
