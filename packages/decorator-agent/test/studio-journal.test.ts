@@ -71,6 +71,7 @@ async function fixture() {
 	const saved: Extract<StudioCommandResult, { status: "saved" }> = {
 		commandId,
 		status: "saved",
+		kind: "edit",
 		revision: "2",
 		snapshot: savedSnapshot,
 		before,

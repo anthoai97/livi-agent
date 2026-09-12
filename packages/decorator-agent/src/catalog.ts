@@ -165,6 +165,7 @@ export interface CatalogRecommendationDetails {
 	shownIds: string[];
 	binding: { designId: string } | null;
 	followUp: CatalogFollowUp | null;
+	requestedQuantity?: number;
 }
 
 export interface CatalogAccess {
@@ -488,6 +489,14 @@ export function isCatalogRecommendationDetails(value: unknown): value is Catalog
 		const binding = record.binding as Record<string, unknown>;
 		if (typeof binding.designId !== "string" || !binding.designId.trim()) return false;
 	}
+	if (
+		record.requestedQuantity !== undefined &&
+		(typeof record.requestedQuantity !== "number" ||
+			!Number.isSafeInteger(record.requestedQuantity) ||
+			record.requestedQuantity < 1 ||
+			record.requestedQuantity > 50)
+	)
+		return false;
 	if (
 		record.followUp !== null &&
 		record.followUp !== "show_more" &&

@@ -70,6 +70,7 @@ const after = { ...before, position: [2, 1, 0] as [number, number, number] };
 const result: StudioCommandResult = {
 	commandId: command.commandId,
 	status: "saved",
+	kind: "edit",
 	revision: "revision-2",
 	snapshot: { ...snapshot, revision: "revision-2", objects: [{ ...snapshot.objects[0]!, ...after }] },
 	before,

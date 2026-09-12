@@ -126,5 +126,14 @@
     "sourceMetadata": {
       "keep": "unrelated exported values stay intact"
     }
-  }
+  },
+  "catalog": [
+    {
+      "catalogId": "lamp-1",
+      "name": "Floor lamp",
+      "category": "lamp",
+      "dimensions": [0.4, 0.4, 1.5],
+      "price": { "amountMinor": 8900, "currency": "USD" }
+    }
+  ]
 }

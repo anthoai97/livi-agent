@@ -224,7 +224,7 @@ function App() {
 		}
 	}
 
-	async function send(action?: Extract<AgentPromptAction, { type: "replace_asset" }>, message = draft.trim()) {
+	async function send(action?: AgentPromptAction, message = draft.trim()) {
 		if (!controller || (!action && !draft.trim()) || operation || busy || studioChanging || attaching) return;
 		setBusy(true);
 		setError("");
@@ -275,6 +275,7 @@ function App() {
 	const catalogSelection = {
 		onReplace: (action: Extract<AgentPromptAction, { type: "replace_asset" }>, message: string) =>
 			void send(action, message),
+		onAdd: (action: Extract<AgentPromptAction, { type: "add_asset" }>, message: string) => void send(action, message),
 		designId: studioState?.phase === "ready" ? studioState.binding?.designId : undefined,
 		disabled: !controller || !connection || busy || attaching || studioChanging || Boolean(operation),
 	};
@@ -419,6 +420,13 @@ function App() {
 						</div>
 					)}
 					{messages.map((item) => {
+						if (item.kind === "status") {
+							return (
+								<output key={item.id} className="studio-action-status">
+									{item.text}
+								</output>
+							);
+						}
 						if (item.kind === "cards") {
 							return (
 								<CatalogCards
@@ -516,6 +524,7 @@ type ChatItem = {
 } & (
 	| { id: string; kind: "message"; role: "user" | "assistant"; text: string; details?: CatalogRecommendationDetails }
 	| { id: string; kind: "cards"; details: CatalogRecommendationDetails }
+	| { id: string; kind: "status"; text: string }
 );
 
 function messageText(message: { content?: unknown }): string {
@@ -552,7 +561,7 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 	const takePending = () => {
 		const current = pending;
 		pending = undefined;
-		return current?.details;
+		return current;
 	};
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message.role === "user") {
@@ -574,6 +583,13 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 		if (entry.type !== "message") continue;
 		if (
 			entry.message.role === "toolResult" &&
+			(entry.message.toolName === "add_object" || entry.message.toolName === "duplicate_object")
+		) {
+			const text = messageText(entry.message);
+			if (text) items.push({ id: entry.id, kind: "status", text });
+		}
+		if (
+			entry.message.role === "toolResult" &&
 			entry.message.toolName === "replace_object" &&
 			!entry.message.isError
 		) {
@@ -593,7 +609,8 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 						pending = undefined;
 					}
 					for (const item of items) {
-						if (item.details?.resolvedConstraints.target?.designId === saved.designId) item.completed = true;
+						if (item.kind !== "status" && item.details?.resolvedConstraints.target?.designId === saved.designId)
+							item.completed = true;
 					}
 				}
 			}
@@ -610,7 +627,7 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 			kind: "message",
 			role: entry.message.role,
 			text,
-			details: entry.message.role === "assistant" ? takePending() : undefined,
+			details: entry.message.role === "assistant" ? takePending()?.details : undefined,
 			metrics:
 				entry.message.role === "assistant" && hasUsage && requestStartedAt !== undefined
 					? {
@@ -629,7 +646,7 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 				kind: "message",
 				role: "assistant",
 				text,
-				details: takePending(),
+				details: takePending()?.details,
 			});
 		}
 	}
@@ -662,25 +679,37 @@ function CatalogCards({
 	details,
 	completed,
 	onReplace,
+	onAdd,
 	designId,
 	disabled,
 }: {
 	details: CatalogRecommendationDetails;
 	completed?: boolean;
 	onReplace: (action: Extract<AgentPromptAction, { type: "replace_asset" }>, message: string) => void;
+	onAdd: (action: Extract<AgentPromptAction, { type: "add_asset" }>, message: string) => void;
 	designId: string | undefined;
 	disabled: boolean;
 }) {
 	const target = details.resolvedConstraints.target;
+	const quantity = details.requestedQuantity ?? 1;
 	return (
 		<ul className="catalog-results" aria-label="Catalog recommendations">
 			{details.products.map((product) => (
 				<CatalogCard
 					key={product.catalogId}
 					product={sanitizeCatalogProduct(product)}
-					disabled={disabled || designId !== target?.designId}
+					disabled={disabled}
+					onAdd={
+						designId
+							? () =>
+									onAdd(
+										{ type: "add_asset", selectedProductId: product.catalogId, quantity },
+										`Add ${quantity} ${sanitizeCatalogProduct(product).name} to the room.`,
+									)
+							: undefined
+					}
 					onReplace={
-						target && !completed
+						target && !completed && designId === target.designId
 							? () =>
 									onReplace(
 										{
@@ -704,10 +733,12 @@ function CatalogCards({
 function CatalogCard({
 	product,
 	onReplace,
+	onAdd,
 	disabled,
 }: {
 	product: CatalogProduct;
 	onReplace: (() => void) | undefined;
+	onAdd: (() => void) | undefined;
 	disabled: boolean;
 }) {
 	const [imageFailed, setImageFailed] = useState(false);
@@ -743,6 +774,11 @@ function CatalogCard({
 					) : (
 						<p className="catalog-card-missing">Price unavailable</p>
 					)}
+					{onAdd ? (
+						<button type="button" disabled={disabled} onClick={onAdd}>
+							Add to room
+						</button>
+					) : null}
 					{onReplace ? (
 						<button type="button" disabled={disabled} onClick={onReplace}>
 							Replace with this

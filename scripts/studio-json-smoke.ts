@@ -11,6 +11,7 @@ import { createClientServiceTransport } from "../packages/client/dist/index.js";
 import {
 	AgentController,
 	type AgentOperationResponse,
+	type AgentPromptAction,
 	SessionManagement,
 	type StudioCommand,
 	StudioDirectory,
@@ -26,6 +27,8 @@ import { readRoom } from "./studio-smoke/room.js";
 interface Scenario {
 	id: string;
 	prompt: string;
+	action?: AgentPromptAction;
+	failNextSave?: boolean;
 	selectedObjectIds: string[];
 	injected: {
 		text: string;
@@ -38,10 +41,13 @@ interface Scenario {
 	reloadAdapterAfter?: boolean;
 	expect: {
 		commands: {
-			action: "move" | "rotate" | "remove";
-			objectId: string;
+			action: "move" | "rotate" | "remove" | "add" | "duplicate";
+			objectId?: string;
 			position?: number[];
 			rotation?: number[];
+			catalogId?: string;
+			sourceObjectId?: string;
+			quantity?: number;
 			status: "saved" | "rejected";
 		}[];
 		json: JsonAssertion[];
@@ -114,9 +120,12 @@ if (values.help) {
 	};
 	let server = await startLiviServer(serverOptions);
 	let adapter = new JsonStudioAdapter(join(directory, "studio-state.json"), "smoke-primary");
-	await adapter.load(fixture.snapshot);
+	await adapter.load(fixture.snapshot, fixture.catalog);
 	const other = new JsonStudioAdapter(join(directory, "other-studio-state.json"), "smoke-secondary");
-	await other.load({ ...structuredClone(fixture.snapshot), designId: `${fixture.snapshot.designId}:isolated` });
+	await other.load(
+		{ ...structuredClone(fixture.snapshot), designId: `${fixture.snapshot.designId}:isolated` },
+		fixture.catalog,
+	);
 	const otherBefore = other.snapshot;
 
 	async function connectChat(sessionId?: string) {
@@ -202,9 +211,8 @@ if (values.help) {
 				chat = await connectChat(sessionId);
 				await eventually(() => chat!.studio.state.value?.phase === "ready", "binding hydration after reopen");
 			}
-			if (scenario.manualEdit) await adapter.manualEdit(scenario.manualEdit.objectId, scenario.manualEdit.transform);
 			await adapter.select(scenario.selectedObjectIds);
-			const before = adapter.snapshot;
+			const planningSnapshot = adapter.snapshot;
 			const emittedStart = adapter.emitted.length;
 			const savesBefore = adapter.saveCount;
 			const transcriptBefore = chat.transcript.state.value?.snapshot?.transcript.length ?? 0;
@@ -232,6 +240,8 @@ if (values.help) {
 						assert.deepEqual(
 							request.tools?.map((tool) => tool.name).sort(),
 							[
+								"add_object",
+								"duplicate_object",
 								"get_product_details",
 								"get_room_context",
 								"move_object",
@@ -252,14 +262,22 @@ if (values.help) {
 				]);
 			}
 			adapter.dropNextReply = Boolean(scenario.dropReplyAndRestart);
-			adapter.beforeExecute =
-				scenario.stop === "after_dispatch"
-					? async () => {
-							dispatchStarted.resolve();
-							await dispatchRelease.promise;
-						}
-					: undefined;
-			const accepted: AgentOperationResponse = await chat.controller.prompt({ message: scenario.prompt }, context);
+			adapter.failNextSave = Boolean(scenario.failNextSave);
+			let afterPlanningBaseline: typeof planningSnapshot | undefined;
+			adapter.beforeExecute = async () => {
+				if (scenario.manualEdit) {
+					await adapter.manualEdit(scenario.manualEdit.objectId, scenario.manualEdit.transform);
+					afterPlanningBaseline = adapter.snapshot;
+				}
+				if (scenario.stop === "after_dispatch") {
+					dispatchStarted.resolve();
+					await dispatchRelease.promise;
+				}
+			};
+			const accepted: AgentOperationResponse = await chat.controller.prompt(
+				{ message: scenario.prompt, ...(scenario.action ? { action: scenario.action } : {}) },
+				context,
+			);
 			if (!accepted.accepted) throw new Error(`Prompt admission ${scenario.id}: ${accepted.error.message}`);
 			if (scenario.stop === "before_dispatch") {
 				await Promise.race([
@@ -304,7 +322,7 @@ if (values.help) {
 					await other.connect(server);
 				}
 				adapter = new JsonStudioAdapter(join(directory, "studio-state.json"), "smoke-primary");
-				await adapter.load(fixture.snapshot);
+				await adapter.load(fixture.snapshot, fixture.catalog);
 				await adapter.connect(server);
 				if (scenario.dropReplyAndRestart) chat = await connectChat(sessionId);
 				await eventually(
@@ -318,6 +336,7 @@ if (values.help) {
 					"simulated Studio finishes the already-dispatched command after Stop",
 				);
 			const after = adapter.snapshot;
+			const before = afterPlanningBaseline ?? planningSnapshot;
 			const entries = chat.transcript.state.value?.snapshot?.transcript.slice(transcriptBefore) ?? [];
 			const text = entries
 				.flatMap((entry) =>
@@ -345,12 +364,16 @@ if (values.help) {
 			});
 			const actualCommands = emitted.map((command) => ({
 				action: command.action.type,
-				objectId: command.objectId,
+				...(command.objectId ? { objectId: command.objectId } : {}),
 				...(command.action.type === "move"
 					? { position: command.action.position }
 					: command.action.type === "rotate"
 						? { rotation: command.action.rotation }
-						: {}),
+						: command.action.type === "add"
+							? { catalogId: command.action.catalogId, quantity: command.action.quantity }
+							: command.action.type === "duplicate"
+								? { sourceObjectId: command.action.sourceObjectId, quantity: command.action.quantity }
+								: {}),
 				status: adapter.results[command.commandId]?.result.status,
 			}));
 			assertions.push(
@@ -364,6 +387,30 @@ if (values.help) {
 					preservedBefore.objects = preservedBefore.objects.filter((object) => object.id !== expected.objectId);
 					preservedBefore.selectedObjectIds = preservedBefore.selectedObjectIds.filter(
 						(id) => id !== expected.objectId,
+					);
+				} else if (expected.action === "add" || expected.action === "duplicate") {
+					const created = preservedAfter.objects.filter(
+						(object) => !before.objects.some((entry) => entry.id === object.id),
+					);
+					assertions.push({
+						assertion: "created instance count",
+						passed: created.length === (expected.quantity ?? 1),
+						expected: expected.quantity ?? 1,
+						actual: created.map((object) => object.id),
+					});
+					assertions.push({
+						assertion: "created instance IDs are distinct",
+						passed: new Set(created.map((object) => object.id)).size === created.length,
+						expected: created.length,
+						actual: created.map((object) => object.id),
+					});
+					if (expected.action === "duplicate" && expected.sourceObjectId) {
+						const sourceBefore = before.objects.find((object) => object.id === expected.sourceObjectId);
+						const sourceAfter = preservedAfter.objects.find((object) => object.id === expected.sourceObjectId);
+						assertions.push(...assertJson(sourceBefore, sourceAfter, [{ path: "", unchanged: true }]));
+					}
+					preservedAfter.objects = preservedAfter.objects.filter((object) =>
+						before.objects.some((entry) => entry.id === object.id),
 					);
 				} else {
 					const object = preservedBefore.objects.find((object) => object.id === expected.objectId);

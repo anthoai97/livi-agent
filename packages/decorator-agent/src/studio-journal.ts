@@ -31,7 +31,7 @@ export interface StudioCommandRecord {
 	operationId: string;
 	turnId: string;
 	invocationId: string;
-	observedBefore: StudioTransform;
+	observedBefore?: StudioTransform;
 	state: "prepared" | "outcome_unknown" | "committed" | "rejected" | "cancelled_before_send";
 	result: StudioCommandResult | null;
 	createdAt: number;

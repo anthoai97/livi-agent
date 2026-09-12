@@ -76,6 +76,11 @@ textarea::placeholder { color: #92988a; }
 .catalog-card-details p { margin-top: 8px; overflow-wrap: anywhere; }
 .catalog-card-actions { margin-top: auto; padding-top: 4px; min-height: 50px; display: flex; flex-direction: column; gap: 4px; }
 .catalog-card-actions button { align-self: flex-start; padding: 5px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; }
+.studio-action-status {
+	margin: 0 0 16px;
+	font-size: 13px;
+	color: #496c51;
+}
 .catalog-card-price { margin: 0; color: #5b4dff; font-size: 16px; font-weight: 700; }
 .catalog-card-missing { margin: 0; color: #8b8f9a; font-size: 12px; }
 .catalog-card-link, .message .catalog-card-link { color: #5b4dff; font-size: 12px; font-weight: 600; text-decoration: none; margin-top: 2px; }

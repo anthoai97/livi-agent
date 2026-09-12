@@ -34,6 +34,7 @@ disagree before saying what you changed.
 - Keep issue titles and descriptions short, plain, and easy to understand.
 - Start with the user-facing problem or feature, then a few bullets describing expected behavior. Use concrete examples when helpful.
 - Leave implementation plans, code references, contract details, and extensive acceptance/test checklists for later unless explicitly requested.
+- Implementation plan should put under docs/plans with format <issue-#>-<feature>.md
 - Use `gh` to create and update issues under `anthoai97`.
 
 ## Code Quality

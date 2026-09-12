@@ -154,7 +154,7 @@ async function attachStudio(broker: StudioBroker) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 2 },
+		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
 		context,
 	);
 	const state = {
@@ -203,6 +203,7 @@ async function attachStudio(broker: StudioBroker) {
 		const result: StudioCommandResult = {
 			commandId: command.commandId,
 			status: "saved",
+			kind: "edit",
 			revision: state.snapshot.revision,
 			snapshot: structuredClone(state.snapshot),
 			before,
@@ -626,6 +627,17 @@ it("keeps catalog follow-up state isolated by conversation", async () => {
 	await second.runtime.lane.waitForIdle(context);
 });
 
+it("records requested quantity from the original add prompt", async () => {
+	const { runtime, faux } = await session({ catalog: createMemoryCatalogAccess(catalogProducts) });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { query: "lamps" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Lamps to add."),
+	]);
+	expect(await runtime.controller.prompt({ message: "Add two lamps" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	expect(searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context))?.requestedQuantity).toBe(2);
+});
+
 it("mergeCatalogFollowUp keeps filters and applies cheaper or smaller bounds", () => {
 	const prior: CatalogRecommendationDetails = {
 		kind: "catalog_recommendations",
@@ -745,6 +757,58 @@ it("refinements reset traversal exclusions while keeping intentional exclusions 
 	expect(smaller.excludeIds).toEqual(["blocked"]);
 	const otherCurrency = { ...prior, resolvedConstraints: { maxPrice: { amountMinor: 20000, currency: "EUR" } } };
 	expect(() => mergeCatalogFollowUp(otherCurrency, "cheaper")).toThrow(/currency/);
+});
+
+it("searches coffee table replacements with an exact target despite a typo in the request", async () => {
+	const coffeeTable = product("replacement-coffee-table", { name: "Oak Coffee Table", category: "coffee_table" });
+	const catalog = createMemoryCatalogAccess([...catalogProducts, coffeeTable]);
+	const { runtime, fake } = await session({ catalog, studio: true });
+	const snapshot = structuredClone(fake!.state.snapshot);
+	snapshot.objects.push({
+		...snapshot.objects[0]!,
+		id: "coffee_table_1640",
+		name: "coffee_table_1950",
+		category: "coffee_table",
+		product: { catalogId: "current-coffee-table", price: null },
+	});
+	snapshot.selectedObjectIds = [];
+	const originalQuery = "I want to replace the coffe table give me some table otpions";
+	const tool = createStudioTools().find((entry) => entry.name === "search_catalog")!;
+	const services = {
+		studio: runtime.studio,
+		catalog,
+		planning: {
+			operationId: "operation",
+			turnId: "turn",
+			binding: fake!.binding,
+			snapshot,
+			action: null,
+			unavailable: null,
+			originalQuery,
+		},
+	};
+	const args = { purpose: "replacement" as const, query: "coffee table options", category: "coffee_table" };
+	const result = await tool.execute(
+		"call",
+		{ ...args, targetObjectId: "coffee_table_1640" },
+		() => {},
+		services,
+		invocation,
+		context,
+	);
+	const details = result.details as CatalogRecommendationDetails;
+	expect(details.products.map((entry) => entry.catalogId)).toEqual([coffeeTable.catalogId]);
+	expect(details.resolvedConstraints).toMatchObject({
+		originalQuery,
+		purpose: "replacement",
+		target: { objectId: "coffee_table_1640", catalogId: "current-coffee-table", category: "coffee_table" },
+		excludeIds: ["current-coffee-table"],
+	});
+	await expect(
+		tool.execute("call", { ...args, targetObjectId: "missing-table" }, () => {}, services, invocation, context),
+	).rejects.toThrow(/invalid_arguments/);
+	expect(fake!.state.commands).toEqual([]);
+	expect(await runtime.studio.journal.records()).toEqual([]);
 });
 
 it("rejects missing named sofa and an explicit target that conflicts with the named sofa", async () => {

@@ -4,7 +4,8 @@ import { type Context, defineService, type ReplicatedState } from "@earendil-wor
  * Rotation is radians, intrinsic XYZ; Studio supports yaw only ([0, 0, yaw]).
  * Adapter rendering must retain its asset front-view correction. See docs/Studio-Contract.md.
  */
-export const STUDIO_CONTRACT_VERSION = 2;
+export const STUDIO_CONTRACT_VERSION = 3;
+export const STUDIO_QUANTITY_MAX = 50;
 export const STUDIO_TRANSFORM_TOLERANCE = 0.0001;
 export const STUDIO_ANGLE_TOLERANCE = 0.000001;
 export type StudioVector3 = [number, number, number];
@@ -55,19 +56,30 @@ export interface StudioSelectionUpdate {
 	sequence: number;
 	selectedObjectIds: string[];
 }
-export type StudioAction =
+export type StudioPlacement =
+	| { type: "absolute"; position: StudioVector3; rotation?: StudioVector3 }
+	| { type: "relative"; anchorObjectId: string; offset?: StudioVector3 };
+export type StudioEditAction =
 	| { type: "move"; position: StudioVector3 }
 	| { type: "rotate"; rotation: StudioVector3 }
 	| { type: "remove" }
 	| { type: "replace"; catalogId: string; expectedCatalogId: string | null };
-export interface StudioCommand {
+export type StudioCreateAction =
+	| { type: "add"; catalogId: string; quantity: number; placement?: StudioPlacement }
+	| { type: "duplicate"; sourceObjectId: string; quantity: number; placement?: StudioPlacement };
+export type StudioAction = StudioEditAction | StudioCreateAction;
+interface StudioCommandBase {
 	commandId: string;
 	conversationId: string;
 	binding: StudioBinding;
 	expectedRevision: string;
+}
+export type StudioCommand =
+	| (StudioCommandBase & { objectId: string; action: StudioEditAction; reversesCommandId?: string })
+	| (StudioCommandBase & { objectId?: never; action: StudioCreateAction; reversesCommandId?: never });
+export interface StudioCreatedInstance {
 	objectId: string;
-	action: StudioAction;
-	reversesCommandId?: string;
+	transform: StudioTransform;
 }
 export type StudioErrorCode =
 	| "studio_unavailable"
@@ -85,10 +97,19 @@ export type StudioCommandResult =
 	| {
 			commandId: string;
 			status: "saved";
+			kind: "edit";
 			revision: string;
 			snapshot: StudioSnapshot;
 			before: StudioTransform;
 			after: StudioTransform | null;
+	  }
+	| {
+			commandId: string;
+			status: "saved";
+			kind: "create";
+			revision: string;
+			snapshot: StudioSnapshot;
+			created: StudioCreatedInstance[];
 	  }
 	| { commandId: string; status: "rejected"; error: StudioError }
 	| { commandId: string; status: "unknown"; message: string };

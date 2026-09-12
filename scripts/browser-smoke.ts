@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "
 import { type CatalogProduct, createMemoryCatalogAccess } from "../packages/decorator-agent/src/catalog.ts";
 import { JsonStudioAdapter } from "./studio-smoke/adapter.js";
 import { eventually } from "./studio-smoke/connection.js";
-import { readRoom } from "./studio-smoke/room.js";
+import { type JsonCatalogFact, readRoom } from "./studio-smoke/room.js";
 
 function catalogProduct(catalogId: string, fields: Partial<CatalogProduct> & { name: string }): CatalogProduct {
 	return {
@@ -130,8 +130,32 @@ try {
 	await page.getByRole("button", { name: "Chats", exact: true }).click();
 	assert.equal(await page.getByRole("navigation", { name: "Conversations" }).getByRole("button").count(), 2);
 	const fixture = await readRoom("scripts/studio-smoke/fixtures/synthetic-room.json");
+	const studioCatalog: JsonCatalogFact[] = [
+		...(fixture.catalog ?? []),
+		{
+			catalogId: "yellow-haven",
+			name: "Haven Yellow Sectional Sofa",
+			category: "sectional_sofa",
+			dimensions: [2.8, 1.6, 0.9],
+			price: { amountMinor: 49999, currency: "USD" },
+		},
+		{
+			catalogId: "yellow-cove",
+			name: "Cove Yellow Sectional",
+			category: "sectional",
+			dimensions: [2.2, 1.4, 0.8],
+			price: null,
+		},
+		{
+			catalogId: "yellow-bend",
+			name: "Bend Yellow L-Shaped Sectional",
+			category: "sectional_sofa",
+			dimensions: [2.5, 1.5, 0.85],
+			price: null,
+		},
+	];
 	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
-	await adapter.load(fixture.snapshot);
+	await adapter.load(fixture.snapshot, studioCatalog);
 	await adapter.connect(server);
 	await adapter.select([]);
 	await page.getByRole("button", { name: "Studio", exact: true }).click();
@@ -183,7 +207,7 @@ try {
 	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
 	assert.equal(await page.getByRole("button", { name: "Disconnect design", exact: true }).isDisabled(), false);
 	adapter = new JsonStudioAdapter(join(directory, "studio.json"), "browser-studio");
-	await adapter.load(fixture.snapshot);
+	await adapter.load(fixture.snapshot, studioCatalog);
 	await adapter.connect(server);
 	await page.getByRole("region", { name: "Studio attachment" }).getByText("Ready", { exact: true }).waitFor();
 	assert.equal(adapter.emitted.length, 0, "Reconnect must not resend an edit");
@@ -253,6 +277,41 @@ try {
 		.selectOption(JSON.stringify(["synthetic-room", "browser-studio"]));
 	await page.getByRole("button", { name: "Attach design", exact: true }).click();
 	await page.getByText("Design synthetic-room", { exact: true }).waitFor();
+	faux.appendResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { query: "Add two lamps" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("Here are lamps you can add."),
+	]);
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Add two lamps");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Here are lamps you can add.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	const addCard = page.locator("[data-catalog-id='yellow-haven']").last();
+	assert.equal(await addCard.getByRole("spinbutton").count(), 0);
+	faux.appendResponses([
+		(input) => {
+			assert.ok(input.systemPrompt?.includes(`"selectedProductId":"yellow-haven"`));
+			assert.ok(input.systemPrompt?.includes(`"quantity":2`));
+			return fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			const result = input.messages.findLast((message) => message.role === "toolResult");
+			assert.ok(result?.role === "toolResult" && !result.isError);
+			assert.ok(JSON.stringify(result.content).includes("Saved add of 2"));
+			return fauxAssistantMessage("Added two lamps to the room.");
+		},
+	]);
+	const addCommandsBefore = adapter.emitted.length;
+	await addCard.getByRole("button", { name: "Add to room", exact: true }).click();
+	await page.getByText("Added two lamps to the room.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(adapter.emitted.length, addCommandsBefore + 1);
+	assert.equal(adapter.emitted.at(-1)?.action.type, "add");
+	if (adapter.emitted.at(-1)?.action.type === "add")
+		assert.deepEqual(
+			{ catalogId: adapter.emitted.at(-1)!.action.catalogId, quantity: adapter.emitted.at(-1)!.action.quantity },
+			{ catalogId: "yellow-haven", quantity: 2 },
+		);
+	await page.getByText("Saved add of 2", { exact: false }).waitFor();
 	const original = adapter.snapshot;
 	const originalObject = original.objects.find((object) => object.id === "chair-red-1")!;
 	faux.appendResponses([
