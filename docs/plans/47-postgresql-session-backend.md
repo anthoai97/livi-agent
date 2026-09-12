@@ -1,4 +1,4 @@
-# PostgreSQL session persistence
+# PostgreSQL session storage
 
 **Status: planned.** Persist agent sessions in PostgreSQL while retaining one active owner per session. Conversations, branches, durable operation state, and usage survive server restart without changing agent behavior.
 
