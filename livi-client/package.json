@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit" },
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit", "test": "node --import tsx --test test/*.test.ts" },
   "dependencies": {
     "@earendil-works/chord": "workspace:*",
     "@earendil-works/pi-client": "workspace:*",

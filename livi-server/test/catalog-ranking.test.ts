@@ -11,6 +11,7 @@ function row(id: number): DesignAssetRegistryRow {
 	return {
 		asset_id: `Product-${id}`,
 		name: `Product ${id}`,
+		catalog_name: null,
 		category: "sectional",
 		description: "A cozy sectional",
 		asset_description: null,

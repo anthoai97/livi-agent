@@ -19,14 +19,16 @@ import { Pool, type PoolClient, type PoolConfig } from "pg";
 import { assertCatalogEmbedding, type CatalogModels } from "./catalog-models.js";
 
 const REGISTRY = "pipeline.design_asset_registry";
+// The registry view omits the product display name stored on pipeline_assets.
 const SELECT_COLUMNS =
-	"asset_id, name, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
+	"asset_id, name, (SELECT catalog_name FROM pipeline.pipeline_assets p WHERE p.asset_id = r.asset_id) AS catalog_name, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
 const ACTIVE_REGISTRY_ROW = ["COALESCE(is_decor_item, false) = false", "COALESCE(is_deleted, false) = false"] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DesignAssetRegistryRow {
 	asset_id: unknown;
 	name: unknown;
+	catalog_name: unknown;
 	category: unknown;
 	description: unknown;
 	asset_description: unknown;
@@ -192,7 +194,7 @@ export function createPostgresCatalogAccess(
 			if (!id || !UUID.test(id)) throw new CatalogError("not_found", "No catalog product matches that ID");
 			const rows = await catalogQuery(
 				pool,
-				`SELECT ${SELECT_COLUMNS} FROM ${REGISTRY}
+				`SELECT ${SELECT_COLUMNS} FROM ${REGISTRY} r
 WHERE asset_id = $1::uuid
   AND ${ACTIVE_REGISTRY_ROW.join("\n  AND ")}
 LIMIT 1`,
@@ -220,7 +222,7 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 	const amountMinor = price === null ? 0 : Math.round(price * 100);
 	return sanitizeCatalogProduct({
 		catalogId,
-		name: asText(row.name) ?? "",
+		name: asText(row.catalog_name) ?? asText(row.name) ?? "",
 		imageUrl: httpUrl(row.image_url),
 		productUrl: httpUrl(row.product_url),
 		imageRef: catalogImageRef(row.image_url),

@@ -22,6 +22,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Markdown from "react-markdown";
+import { hideInternalIds } from "./message-markdown";
 import { createWebSocketTransport } from "./transport";
 import "./style.css";
 
@@ -440,7 +441,9 @@ function App() {
 						return (
 							<article key={item.id} className={`message ${item.role}`}>
 								<h2>{item.role === "user" ? "You" : "Livi"}</h2>
-								<Markdown skipHtml>{item.text}</Markdown>
+								<Markdown skipHtml rehypePlugins={item.role === "assistant" ? [hideInternalIds] : []}>
+									{item.text}
+								</Markdown>
 								{item.details ? (
 									<CatalogCards details={item.details} completed={item.completed} {...catalogSelection} />
 								) : null}
@@ -712,7 +715,7 @@ function CatalogCards({
 							? () =>
 									onAdd(
 										{ type: "add_asset", selectedProductId: product.catalogId, quantity },
-										`Add ${quantity} ${sanitizeCatalogProduct(product).name} to the room.`,
+										`Add ${quantity} ${product.name} to the room.`,
 									)
 							: undefined
 					}
@@ -728,7 +731,7 @@ function CatalogCards({
 											expectedRevision: target.revision,
 											expectedCatalogId: target.catalogId,
 										},
-										`Replace the ${target.category} with ${sanitizeCatalogProduct(product).name}.`,
+										`Replace the ${target.category.replaceAll("_", " ")} with ${product.name}.`,
 									)
 							: undefined
 					}

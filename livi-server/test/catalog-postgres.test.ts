@@ -28,6 +28,7 @@ function registryRow(overrides: Partial<DesignAssetRegistryRow> = {}): DesignAss
 	return {
 		asset_id: "11111111-1111-4111-8111-111111111111",
 		name: "Zeroed sofa",
+		catalog_name: null,
 		category: "sofa",
 		description: null,
 		asset_description: "fallback copy",
@@ -96,6 +97,16 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 	] as const) {
 		const mapped = mapRegistryRow(registryRow({ asset_id: "sofa", name: "Sofa", price: raw }));
 		assert.deepEqual(mapped?.price, expected === null ? null : { amountMinor: expected, currency: "USD" });
+	}
+});
+
+test("mapRegistryRow prefers the catalog display name and falls back when it is blank", () => {
+	for (const [catalog_name, expected] of [
+		[" Bohemian Wool Rug ", "Bohemian Wool Rug"],
+		[null, "rug_13"],
+		["   ", "rug_13"],
+	] as const) {
+		assert.equal(mapRegistryRow(registryRow({ name: "rug_13", catalog_name }))?.name, expected);
 	}
 });
 
@@ -355,6 +366,7 @@ async function setupRegistry(adminUrl: string): Promise<void> {
 CREATE TABLE pipeline.pipeline_assets (
   asset_id uuid PRIMARY KEY,
   name text,
+  catalog_name text,
   category text,
   description text,
   asset_description text,
@@ -408,6 +420,9 @@ VALUES
 VALUES ($1, 'Yellow plant', 'sectional', 'yellow', 0, NULL, NULL, false)`,
 			["66666666-6666-4666-8666-666666666666"],
 		);
+		await pool.query("UPDATE pipeline.pipeline_assets SET catalog_name = name, name = 'sofa_1' WHERE asset_id = $1", [
+			"11111111-1111-4111-8111-111111111111",
+		]);
 		await pool.query(`INSERT INTO pipeline.pipeline_assets (asset_id, name, category, materials)
 SELECT ('00000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
 CASE WHEN n = 85 THEN 'Velvet desk' ELSE 'A desk ' || n END, 'desk', CASE WHEN n = 85 THEN 'velvet' ELSE 'wood' END
@@ -468,6 +483,7 @@ test(
 			room: { categories: ["sofa"] },
 		});
 		assert.equal(calls, 1);
+		assert.equal(scoped.products[0]?.name, "Haven Yellow Sectional Sofa");
 		assert.equal(scoped.retrieval?.strategy, "vector");
 		assert.deepEqual(
 			scoped.products.map((p) => p.catalogId),
