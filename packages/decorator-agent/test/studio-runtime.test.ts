@@ -5,11 +5,14 @@ import { convertTools } from "@earendil-works/pi-ai/api/google-shared";
 import { afterEach, expect, it, vi } from "vitest";
 import { type CatalogAccess, createMemoryCatalogAccess } from "../src/catalog.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
-import type {
-	StudioCommand,
-	StudioCommandResult,
-	StudioMailboxRequest,
-	StudioSnapshot,
+import {
+	STUDIO_CONTRACT_VERSION,
+	type StudioCommand,
+	type StudioCommandEdit,
+	type StudioCommandResult,
+	type StudioEditResult,
+	type StudioMailboxRequest,
+	type StudioSnapshot,
 } from "../src/services/studio.ts";
 import { StudioBroker } from "../src/studio-broker.ts";
 import { createStudioTools } from "../src/studio-tools.ts";
@@ -65,7 +68,7 @@ async function adapter(broker: StudioBroker, stored: Session) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
+		{ ...binding, label: "Simulated Studio", contractVersion: STUDIO_CONTRACT_VERSION },
 		context,
 	);
 	const state = {
@@ -97,7 +100,11 @@ async function adapter(broker: StudioBroker, stored: Session) {
 			);
 			return;
 		}
-		let result: StudioCommandResult;
+		let result: StudioCommandResult = {
+			commandId: request.type === "execute" ? request.command.commandId : "",
+			status: "unknown",
+			message: "No simulated result",
+		};
 		if (request.type === "execute") {
 			const command = request.command;
 			state.commands.push(command);
@@ -109,80 +116,106 @@ async function adapter(broker: StudioBroker, stored: Session) {
 					status: "rejected",
 					error: { code: "stale_revision", message: "Room changed since planning" },
 				};
-			else if (command.action.type === "add" || command.action.type === "duplicate") {
-				const action = command.action;
-				const source =
-					action.type === "duplicate"
-						? state.snapshot.objects.find((entry) => entry.id === action.sourceObjectId)
-						: undefined;
-				if (action.type === "duplicate" && !source)
-					result = {
-						commandId: command.commandId,
-						status: "rejected",
-						error: { code: "invalid_target", message: "Duplicate source does not exist" },
-					};
-				else {
-					const created = [];
-					for (let index = 0; index < action.quantity; index++) {
-						const objectId = `${command.commandId}:${index}`;
-						const transform = {
-							position: [2 + index * 0.25, 2, 0] as [number, number, number],
-							rotation: [...(source?.rotation ?? [0, 0, 0])] as [number, number, number],
-							scale: [...(source?.scale ?? [1, 1, 1])] as [number, number, number],
+			else {
+				const previous = structuredClone(state.snapshot);
+				const edits: StudioCommandEdit[] =
+					command.action.type === "batch" ? command.action.edits : [command as StudioCommandEdit];
+				const results: StudioEditResult[] = [];
+				for (const edit of edits) {
+					const { commandId, conversationId, binding, expectedRevision } = request.command;
+					const command: StudioCommand = { commandId, conversationId, binding, expectedRevision, ...edit };
+					if (command.action.type === "add" || command.action.type === "duplicate") {
+						const action = command.action;
+						const source =
+							action.type === "duplicate"
+								? state.snapshot.objects.find((entry) => entry.id === action.sourceObjectId)
+								: undefined;
+						if (action.type === "duplicate" && !source)
+							result = {
+								commandId: command.commandId,
+								status: "rejected",
+								error: { code: "invalid_target", message: "Duplicate source does not exist" },
+							};
+						else {
+							const created = [];
+							for (let index = 0; index < action.quantity; index++) {
+								const objectId = `${command.commandId}:${index}`;
+								const transform = {
+									position: [2 + index * 0.25, 2, 0] as [number, number, number],
+									rotation: [...(source?.rotation ?? [0, 0, 0])] as [number, number, number],
+									scale: [...(source?.scale ?? [1, 1, 1])] as [number, number, number],
+								};
+								state.snapshot.objects.push({
+									id: objectId,
+									name: source?.name ?? (action.type === "add" ? action.catalogId : "copy"),
+									category: source?.category ?? "catalog",
+									dimensions: [...(source?.dimensions ?? [1, 1, 1])] as [number, number, number],
+									...transform,
+									product: source?.product
+										? structuredClone(source.product)
+										: { catalogId: action.type === "add" ? action.catalogId : "unknown", price: null },
+								});
+								created.push({ objectId, transform });
+							}
+							state.snapshot.revision = String(Number(state.snapshot.revision) + action.quantity);
+							result = {
+								commandId: command.commandId,
+								status: "saved",
+								kind: "create",
+								revision: state.snapshot.revision,
+								snapshot: structuredClone(state.snapshot),
+								created,
+							};
+						}
+					} else {
+						const object = state.snapshot.objects.find((object) => object.id === command.objectId)!;
+						const before = {
+							position: [...object.position] as [number, number, number],
+							rotation: [...object.rotation] as [number, number, number],
+							scale: [...object.scale] as [number, number, number],
 						};
-						state.snapshot.objects.push({
-							id: objectId,
-							name: source?.name ?? (action.type === "add" ? action.catalogId : "copy"),
-							category: source?.category ?? "catalog",
-							dimensions: [...(source?.dimensions ?? [1, 1, 1])] as [number, number, number],
-							...transform,
-							product: source?.product
-								? structuredClone(source.product)
-								: { catalogId: action.type === "add" ? action.catalogId : "unknown", price: null },
-						});
-						created.push({ objectId, transform });
+						if (command.action.type === "move") object.position = command.action.position;
+						if (command.action.type === "rotate") object.rotation = command.action.rotation;
+						if (command.action.type === "replace")
+							object.product = { catalogId: command.action.catalogId, price: null };
+						if (command.action.type === "remove") {
+							state.snapshot.objects = state.snapshot.objects.filter((object) => object.id !== command.objectId);
+							state.snapshot.selectedObjectIds = state.snapshot.selectedObjectIds.filter(
+								(id) => id !== command.objectId,
+							);
+						}
+						state.snapshot.revision = String(Number(state.snapshot.revision) + 1);
+						const after =
+							command.action.type === "remove"
+								? null
+								: { position: object.position, rotation: object.rotation, scale: object.scale };
+						result = {
+							commandId: command.commandId,
+							status: "saved",
+							kind: "edit",
+							revision: state.snapshot.revision,
+							snapshot: structuredClone(state.snapshot),
+							before,
+							after: structuredClone(after),
+						};
 					}
-					state.snapshot.revision = String(Number(state.snapshot.revision) + 1);
+					if (result.status !== "saved") break;
+					results.push(
+						result.kind === "edit"
+							? { kind: "edit", before: result.before, after: result.after }
+							: { kind: "create", created: result.kind === "create" ? result.created : [] },
+					);
+				}
+				if (results.length !== edits.length) state.snapshot = previous;
+				else if (command.action.type === "batch")
 					result = {
 						commandId: command.commandId,
 						status: "saved",
-						kind: "create",
+						kind: "batch",
+						results,
 						revision: state.snapshot.revision,
 						snapshot: structuredClone(state.snapshot),
-						created,
 					};
-				}
-			} else {
-				const object = state.snapshot.objects.find((object) => object.id === command.objectId)!;
-				const before = {
-					position: [...object.position] as [number, number, number],
-					rotation: [...object.rotation] as [number, number, number],
-					scale: [...object.scale] as [number, number, number],
-				};
-				if (command.action.type === "move") object.position = command.action.position;
-				if (command.action.type === "rotate") object.rotation = command.action.rotation;
-				if (command.action.type === "replace")
-					object.product = { catalogId: command.action.catalogId, price: null };
-				if (command.action.type === "remove") {
-					state.snapshot.objects = state.snapshot.objects.filter((object) => object.id !== command.objectId);
-					state.snapshot.selectedObjectIds = state.snapshot.selectedObjectIds.filter(
-						(id) => id !== command.objectId,
-					);
-				}
-				state.snapshot.revision = String(Number(state.snapshot.revision) + 1);
-				const after =
-					command.action.type === "remove"
-						? null
-						: { position: object.position, rotation: object.rotation, scale: object.scale };
-				result = {
-					commandId: command.commandId,
-					status: "saved",
-					kind: "edit",
-					revision: state.snapshot.revision,
-					snapshot: structuredClone(state.snapshot),
-					before,
-					after: structuredClone(after),
-				};
 			}
 			state.results.set(command.commandId, result);
 			if (state.hold) {

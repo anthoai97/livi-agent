@@ -16,11 +16,12 @@ import {
 } from "../src/catalog.ts";
 import { loadRecommendationHistory } from "../src/catalog-history.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
-import type {
-	StudioCommand,
-	StudioCommandResult,
-	StudioMailboxRequest,
-	StudioSnapshot,
+import {
+	STUDIO_CONTRACT_VERSION,
+	type StudioCommand,
+	type StudioCommandResult,
+	type StudioMailboxRequest,
+	type StudioSnapshot,
 } from "../src/services/studio.ts";
 import { StudioBroker } from "../src/studio-broker.ts";
 import { createStudioTools } from "../src/studio-tools.ts";
@@ -154,7 +155,7 @@ async function attachStudio(broker: StudioBroker) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
+		{ ...binding, label: "Simulated Studio", contractVersion: STUDIO_CONTRACT_VERSION },
 		context,
 	);
 	const state = {

@@ -135,8 +135,46 @@ export class StudioJournal {
 	async prepare(record: Omit<StudioCommandRecord, "state" | "result" | "createdAt">): Promise<StudioCommandRecord> {
 		if (this.blocked.has(record.operationId))
 			throw new Error("mutation_blocked: Wait for a new user request before another room action");
+		if (
+			record.command.action.type === "batch" &&
+			[...this.current.values()].filter(
+				(entry) =>
+					entry.operationId === record.operationId &&
+					entry.result?.status === "rejected" &&
+					entry.result.error.code === "stale_revision",
+			).length >= 3
+		)
+			throw new Error("mutation_blocked: Stale retry limit reached; submit a new request");
 		const existing = await this.get(record.command.commandId);
 		if (existing) return existing;
+		const admission = await this.admission(record.operationId);
+		const admittedType =
+			admission?.action?.type === "add_asset"
+				? "add"
+				: admission?.action?.type === "replace_asset"
+					? "replace"
+					: null;
+		if (admittedType) {
+			const edits = record.command.action.type === "batch" ? record.command.action.edits : [record.command];
+			const count = edits.filter((edit) => edit.action.type === admittedType).length;
+			if (count > 1)
+				throw new Error(`invalid_arguments: Use one ${admittedType} edit for the admitted product and quantity`);
+			if (
+				count &&
+				admittedType === "add" &&
+				[...this.current.values()].some((entry) => {
+					if (
+						entry.operationId !== record.operationId ||
+						entry.state === "rejected" ||
+						entry.state === "cancelled_before_send"
+					)
+						return false;
+					const prior = entry.command.action.type === "batch" ? entry.command.action.edits : [entry.command];
+					return prior.some((edit) => edit.action.type === admittedType);
+				})
+			)
+				throw new Error(`invalid_arguments: The admitted ${admittedType} was already submitted in this request`);
+		}
 		const next: StudioCommandRecord = { ...record, state: "prepared", result: null, createdAt: Date.now() };
 		this.current.set(record.command.commandId, next);
 		return next;
@@ -164,6 +202,7 @@ export class StudioJournal {
 			result,
 		};
 		this.current.set(result.commandId, next);
+		if (result.status === "unknown" && record.command.action.type === "batch") this.blocked.add(record.operationId);
 		if (result.status === "saved") {
 			try {
 				await this.session.setValue(commandAddress(result.commandId), next, context);

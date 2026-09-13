@@ -61,11 +61,41 @@ const creation: StudioCommandResult = {
 		{ objectId: "new-chair-2", transform: { position: [3, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
 	],
 };
+const batch: StudioCommand = {
+	commandId: "example-batch",
+	conversationId: command.conversationId,
+	binding: command.binding,
+	expectedRevision: "43",
+	action: {
+		type: "batch",
+		edits: [
+			{ objectId: "placed-chair-1", action: { type: "move", position: [2, 1, 0] } },
+			{ action: { type: "add", catalogId: "catalog-chair", quantity: 2 } },
+		],
+	},
+};
+const batchResult: StudioCommandResult = {
+	commandId: batch.commandId,
+	status: "saved",
+	kind: "batch",
+	revision: "46",
+	snapshot: { ...snapshot, revision: "46" },
+	results: [
+		{
+			kind: "edit",
+			before: { position: [1, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+			after: { position: [2, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+		},
+		{ kind: "create", created: creation.created },
+	],
+};
 console.log(
 	STUDIO_CONTRACT_VERSION,
 	StudioConnection,
 	typeof Client,
 	command.action,
+	batch.action,
+	batchResult.results,
 	addition.action,
 	creation.created,
 	snapshot.budget,

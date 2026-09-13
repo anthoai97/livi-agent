@@ -4,7 +4,7 @@ import { type Context, defineService, type ReplicatedState } from "@earendil-wor
  * Rotation is radians, intrinsic XYZ; Studio supports yaw only ([0, 0, yaw]).
  * Adapter rendering must retain its asset front-view correction. See docs/Studio-Contract.md.
  */
-export const STUDIO_CONTRACT_VERSION = 3;
+export const STUDIO_CONTRACT_VERSION = 1;
 export const STUDIO_QUANTITY_MAX = 50;
 export const STUDIO_TRANSFORM_TOLERANCE = 0.0001;
 export const STUDIO_ANGLE_TOLERANCE = 0.000001;
@@ -74,9 +74,23 @@ interface StudioCommandBase {
 	binding: StudioBinding;
 	expectedRevision: string;
 }
-export type StudioCommand =
-	| (StudioCommandBase & { objectId: string; action: StudioEditAction; reversesCommandId?: string })
-	| (StudioCommandBase & { objectId?: never; action: StudioCreateAction; reversesCommandId?: never });
+export type StudioCommandEdit =
+	| { objectId: string; action: StudioEditAction; reversesCommandId?: string; reversesEditIndex?: number }
+	| { objectId?: never; action: StudioCreateAction; reversesCommandId?: never; reversesEditIndex?: never };
+export type StudioCommand = StudioCommandBase &
+	(
+		| StudioCommandEdit
+		| {
+				objectId?: never;
+				action: { type: "batch"; edits: StudioCommandEdit[] };
+				reversesCommandId?: never;
+				reversesEditIndex?: never;
+		  }
+	);
+/** Results describe each edit immediately after it, in request order. */
+export type StudioEditResult =
+	| { kind: "edit"; before: StudioTransform; after: StudioTransform | null }
+	| { kind: "create"; created: StudioCreatedInstance[] };
 export interface StudioCreatedInstance {
 	objectId: string;
 	transform: StudioTransform;
@@ -94,6 +108,14 @@ export interface StudioError {
 	message: string;
 }
 export type StudioCommandResult =
+	| {
+			commandId: string;
+			status: "saved";
+			kind: "batch";
+			results: StudioEditResult[];
+			revision: string;
+			snapshot: StudioSnapshot;
+	  }
 	| {
 			commandId: string;
 			status: "saved";

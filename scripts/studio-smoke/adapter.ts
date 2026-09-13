@@ -6,12 +6,15 @@ import { BACKGROUND_CONTEXT as context } from "../../packages/chord/dist/context
 import { createRemoteServiceBinding } from "../../packages/chord/dist/index.js";
 import { createClientServiceTransport } from "../../packages/client/dist/index.js";
 import {
+	STUDIO_CONTRACT_VERSION,
 	STUDIO_QUANTITY_MAX,
 	type StudioCommand,
+	type StudioCommandEdit,
 	type StudioCommandResult,
 	StudioConnection,
 	type StudioContextUpdate,
 	type StudioCreatedInstance,
+	type StudioEditResult,
 	type StudioMailboxRequest,
 	type StudioPlacement,
 	type StudioSnapshot,
@@ -126,7 +129,7 @@ export class JsonStudioAdapter {
 					designId: this.state.snapshot.designId,
 					tabId: this.tabId,
 					label: `JSON Studio · ${this.state.snapshot.designId}`,
-					contractVersion: 3,
+					contractVersion: STUDIO_CONTRACT_VERSION,
 				},
 				context,
 			)
@@ -191,10 +194,6 @@ export class JsonStudioAdapter {
 			return structuredClone(previous.result);
 		}
 		const next = structuredClone(this.state);
-		const creating = command.action.type === "add" || command.action.type === "duplicate";
-		const object = command.objectId
-			? next.snapshot.objects.find((entry) => entry.id === command.objectId)
-			: undefined;
 		let result: StudioCommandResult;
 		if (command.binding.designId !== next.snapshot.designId || command.binding.tabId !== this.tabId)
 			result = {
@@ -208,76 +207,76 @@ export class JsonStudioAdapter {
 				status: "rejected",
 				error: { code: "stale_revision", message: "Saved JSON revision changed" },
 			};
-		else if (!creating && !object)
-			result = {
-				commandId: command.commandId,
-				status: "rejected",
-				error: { code: "invalid_target", message: "Placed object does not exist" },
-			};
 		else {
 			try {
 				const failSave = this.failNextSave;
 				this.failNextSave = false;
 				if (failSave) throw Object.assign(new Error("Simulated save failure"), { code: "save_rejected" });
-				if (creating) {
-					const created = this.applyCreate(next.snapshot, command);
-					validateSnapshot(next.snapshot);
-					next.saveCount += 1;
-					next.snapshot.revision = `simulated:${next.saveCount}:${randomUUID()}`;
-					result = {
-						commandId: command.commandId,
-						status: "saved",
-						kind: "create",
-						revision: next.snapshot.revision,
-						snapshot: structuredClone(next.snapshot),
-						created,
-					};
-				} else {
-					const target = object!;
-					const before = {
-						position: [...target.position],
-						rotation: [...target.rotation],
-						scale: [...target.scale],
-					} as StudioTransform;
-					switch (command.action.type) {
-						case "move":
-							target.position = structuredClone(command.action.position);
-							break;
-						case "rotate":
-							target.rotation = structuredClone(command.action.rotation);
-							break;
-						case "replace":
-							if ((target.product?.catalogId ?? null) !== command.action.expectedCatalogId)
-								throw new Error("Prior catalog product changed");
-							target.product = { catalogId: command.action.catalogId, price: null };
-							break;
-						case "remove":
-							next.snapshot.objects = next.snapshot.objects.filter((entry) => entry.id !== command.objectId);
-							next.snapshot.selectedObjectIds = next.snapshot.selectedObjectIds.filter(
-								(id) => id !== command.objectId,
-							);
-							break;
+				const edits: StudioCommandEdit[] =
+					command.action.type === "batch" ? command.action.edits : [command as StudioCommandEdit];
+				const count = edits.reduce(
+					(sum, edit) =>
+						sum + (edit.action.type === "add" || edit.action.type === "duplicate" ? edit.action.quantity : 1),
+					0,
+				);
+				if (count < 1 || count > STUDIO_QUANTITY_MAX) throw new Error("Batch requires 1-50 expanded operations");
+				const results: StudioEditResult[] = [];
+				for (const edit of edits) {
+					if (edit.action.type === "add" || edit.action.type === "duplicate") {
+						results.push({ kind: "create", created: this.applyCreate(next.snapshot, edit) });
+					} else {
+						const target = next.snapshot.objects.find((entry) => entry.id === edit.objectId);
+						if (!target) throw new Error("Placed object does not exist");
+						const before: StudioTransform = structuredClone({
+							position: target.position,
+							rotation: target.rotation,
+							scale: target.scale,
+						});
+						switch (edit.action.type) {
+							case "move":
+								target.position = structuredClone(edit.action.position);
+								break;
+							case "rotate":
+								target.rotation = structuredClone(edit.action.rotation);
+								break;
+							case "replace":
+								if ((target.product?.catalogId ?? null) !== edit.action.expectedCatalogId)
+									throw new Error("Prior catalog product changed");
+								target.product = { catalogId: edit.action.catalogId, price: null };
+								break;
+							case "remove":
+								next.snapshot.objects = next.snapshot.objects.filter((entry) => entry.id !== edit.objectId);
+								next.snapshot.selectedObjectIds = next.snapshot.selectedObjectIds.filter(
+									(id) => id !== edit.objectId,
+								);
+								break;
+						}
+						results.push({
+							kind: "edit",
+							before,
+							after:
+								edit.action.type === "remove"
+									? null
+									: structuredClone({
+											position: target.position,
+											rotation: target.rotation,
+											scale: target.scale,
+										}),
+						});
 					}
 					validateSnapshot(next.snapshot);
-					next.saveCount += 1;
-					next.snapshot.revision = `simulated:${next.saveCount}:${randomUUID()}`;
-					result = {
-						commandId: command.commandId,
-						status: "saved",
-						kind: "edit",
-						revision: next.snapshot.revision,
-						snapshot: structuredClone(next.snapshot),
-						before,
-						after:
-							command.action.type === "remove"
-								? null
-								: {
-										position: [...target.position],
-										rotation: [...target.rotation],
-										scale: [...target.scale],
-									},
-					};
 				}
+				next.saveCount += 1;
+				next.snapshot.revision = /^(0|[1-9][0-9]*)$/.test(next.snapshot.revision)
+					? String(Number(next.snapshot.revision) + count)
+					: `simulated:${next.saveCount}:${randomUUID()}`;
+				result = {
+					commandId: command.commandId,
+					status: "saved",
+					revision: next.snapshot.revision,
+					snapshot: structuredClone(next.snapshot),
+					...(command.action.type === "batch" ? { kind: "batch", results } : results[0]!),
+				};
 			} catch (error) {
 				next.snapshot = this.snapshot;
 				next.saveCount = this.state.saveCount;
@@ -322,7 +321,7 @@ export class JsonStudioAdapter {
 		await service.respond({ ...identity, type: "result", result, context: this.update() }, context);
 	}
 
-	private applyCreate(snapshot: StudioSnapshot, command: StudioCommand): StudioCreatedInstance[] {
+	private applyCreate(snapshot: StudioSnapshot, command: StudioCommandEdit): StudioCreatedInstance[] {
 		const action = command.action;
 		if (action.type !== "add" && action.type !== "duplicate") throw new Error("Unsupported Studio action");
 		if (!Number.isSafeInteger(action.quantity) || action.quantity < 1 || action.quantity > STUDIO_QUANTITY_MAX)
