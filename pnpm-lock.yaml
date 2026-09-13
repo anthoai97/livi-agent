@@ -275,6 +275,28 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
 
+  packages/session-backends/postgres-node:
+    dependencies:
+      '@earendil-works/pi-agent-core':
+        specifier: workspace:*
+        version: link:../../agent
+      '@earendil-works/pi-ai':
+        specifier: workspace:*
+        version: link:../../ai
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      '@vitest/coverage-v8':
+        specifier: 4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: 4.1.9
+        version: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
+
   packages/session-backends/sqlite-node:
     dependencies:
       '@earendil-works/pi-agent-core':
@@ -2879,7 +2901,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.9(@types/node@24.5.2)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@24.5.2)(tsx@4.22.1)(yaml@2.9.0))
+      vitest: 4.1.9(@types/node@22.19.19)(@vitest/coverage-v8@4.1.9)(vite@7.1.5(@types/node@22.19.19)(tsx@4.22.1)(yaml@2.9.0))
 
   '@vitest/expect@4.1.9':
     dependencies:

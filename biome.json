@@ -30,6 +30,7 @@
 			"livi-server/src/**/*.ts",
 			"livi-server/test/**/*.ts",
 			"packages/decorator-agent/src/**/*.ts",
+			"packages/session-backends/postgres-node/**/*.ts",
 			"packages/decorator-agent/test/**/*.ts",
 			"scripts/**/*.{ts,mjs}",
 			"!!**/node_modules",
