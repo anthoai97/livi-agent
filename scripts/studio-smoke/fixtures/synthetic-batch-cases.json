@@ -1,0 +1,434 @@
+{
+  "description": "Injected model, real local Livi server and SQLite, simulated atomic JSON Studio. Assert one save per ordered batch, preservation, Stop and restart without replay.",
+  "scenarios": [
+    {
+      "id": "six-removals-one-save",
+      "prompt": "Save these related room edits together.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Edits completed.",
+        "call": {
+          "name": "batch_room_edits",
+          "arguments": {
+            "edits": [
+              {
+                "type": "remove",
+                "objectId": "chair-1"
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-2"
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-3"
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-4"
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-5"
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-6"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "batch",
+            "edits": [
+              {
+                "objectId": "chair-1",
+                "action": {
+                  "type": "remove"
+                }
+              },
+              {
+                "objectId": "chair-2",
+                "action": {
+                  "type": "remove"
+                }
+              },
+              {
+                "objectId": "chair-3",
+                "action": {
+                  "type": "remove"
+                }
+              },
+              {
+                "objectId": "chair-4",
+                "action": {
+                  "type": "remove"
+                }
+              },
+              {
+                "objectId": "chair-5",
+                "action": {
+                  "type": "remove"
+                }
+              },
+              {
+                "objectId": "chair-6",
+                "action": {
+                  "type": "remove"
+                }
+              }
+            ],
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/revision",
+            "equals": "49"
+          },
+          {
+            "path": "/objects/0/id",
+            "equals": "chair-7"
+          },
+          {
+            "path": "/objects/1/id",
+            "equals": "chair-8"
+          },
+          {
+            "path": "/objects/2",
+            "absent": true
+          }
+        ]
+      },
+      "reloadAdapterAfter": true
+    },
+    {
+      "id": "batch-stop-before",
+      "prompt": "Save these related room edits together.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Edits completed.",
+        "call": {
+          "name": "batch_room_edits",
+          "arguments": {
+            "edits": [
+              {
+                "type": "move",
+                "objectId": "chair-7",
+                "position": [
+                  3,
+                  2,
+                  0
+                ]
+              },
+              {
+                "type": "rotate",
+                "objectId": "chair-8",
+                "rotation": [
+                  0,
+                  0,
+                  1
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [],
+        "json": [
+          {
+            "path": "",
+            "unchanged": true
+          }
+        ]
+      },
+      "stop": "before_dispatch"
+    },
+    {
+      "id": "batch-stop-after",
+      "prompt": "Save these related room edits together.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Edits completed.",
+        "call": {
+          "name": "batch_room_edits",
+          "arguments": {
+            "edits": [
+              {
+                "type": "move",
+                "objectId": "chair-7",
+                "position": [
+                  3,
+                  2,
+                  0
+                ]
+              },
+              {
+                "type": "rotate",
+                "objectId": "chair-8",
+                "rotation": [
+                  0,
+                  0,
+                  1
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "batch",
+            "edits": [
+              {
+                "objectId": "chair-7",
+                "action": {
+                  "type": "move",
+                  "position": [
+                    3,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "objectId": "chair-8",
+                "action": {
+                  "type": "rotate",
+                  "rotation": [
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            ],
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              3,
+              2,
+              0
+            ]
+          },
+          {
+            "path": "/objects/1/rotation",
+            "equals": [
+              0,
+              0,
+              1
+            ]
+          },
+          {
+            "path": "/revision",
+            "equals": "51"
+          }
+        ]
+      },
+      "stop": "after_dispatch"
+    },
+    {
+      "id": "batch-lost-ack-restart",
+      "prompt": "Save these related room edits together.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Edits completed.",
+        "call": {
+          "name": "batch_room_edits",
+          "arguments": {
+            "edits": [
+              {
+                "type": "move",
+                "objectId": "chair-7",
+                "position": [
+                  4,
+                  2,
+                  0
+                ]
+              },
+              {
+                "type": "rotate",
+                "objectId": "chair-8",
+                "rotation": [
+                  0,
+                  0,
+                  2
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "batch",
+            "edits": [
+              {
+                "objectId": "chair-7",
+                "action": {
+                  "type": "move",
+                  "position": [
+                    4,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "objectId": "chair-8",
+                "action": {
+                  "type": "rotate",
+                  "rotation": [
+                    0,
+                    0,
+                    2
+                  ]
+                }
+              }
+            ],
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/objects/0/position",
+            "equals": [
+              4,
+              2,
+              0
+            ]
+          },
+          {
+            "path": "/objects/1/rotation",
+            "equals": [
+              0,
+              0,
+              2
+            ]
+          },
+          {
+            "path": "/revision",
+            "equals": "53"
+          }
+        ]
+      },
+      "dropReplyAndRestart": true
+    },
+    {
+      "id": "multiple-creates-and-intermediate-move",
+      "prompt": "Make three copies of chair 8 and move then remove chair 7 in one save.",
+      "selectedObjectIds": [],
+      "injected": {
+        "text": "Saved the requested edits.",
+        "call": {
+          "name": "batch_room_edits",
+          "arguments": {
+            "edits": [
+              {
+                "type": "duplicate",
+                "objectId": "chair-8",
+                "quantity": 1
+              },
+              {
+                "type": "duplicate",
+                "objectId": "chair-8",
+                "quantity": 2
+              },
+              {
+                "type": "move",
+                "objectId": "chair-7",
+                "position": [
+                  1,
+                  2,
+                  0
+                ]
+              },
+              {
+                "type": "remove",
+                "objectId": "chair-7"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "commands": [
+          {
+            "action": "batch",
+            "edits": [
+              {
+                "action": {
+                  "type": "duplicate",
+                  "sourceObjectId": "chair-8",
+                  "quantity": 1
+                }
+              },
+              {
+                "action": {
+                  "type": "duplicate",
+                  "sourceObjectId": "chair-8",
+                  "quantity": 2
+                }
+              },
+              {
+                "objectId": "chair-7",
+                "action": {
+                  "type": "move",
+                  "position": [
+                    1,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "objectId": "chair-7",
+                "action": {
+                  "type": "remove"
+                }
+              }
+            ],
+            "status": "saved"
+          }
+        ],
+        "json": [
+          {
+            "path": "/revision",
+            "equals": "58"
+          },
+          {
+            "path": "/objects/0/id",
+            "equals": "chair-8"
+          },
+          {
+            "path": "/objects/1/rotation",
+            "equals": [
+              0,
+              0,
+              2
+            ]
+          },
+          {
+            "path": "/objects/3/product/catalogId",
+            "equals": "same-chair-product"
+          },
+          {
+            "path": "/objects/4",
+            "absent": true
+          }
+        ]
+      },
+      "reloadAdapterAfter": true
+    }
+  ]
+}

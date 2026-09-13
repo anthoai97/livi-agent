@@ -583,14 +583,22 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 		if (entry.type !== "message") continue;
 		if (
 			entry.message.role === "toolResult" &&
-			(entry.message.toolName === "add_object" || entry.message.toolName === "duplicate_object")
+			(entry.message.toolName === "add_object" ||
+				entry.message.toolName === "duplicate_object" ||
+				entry.message.toolName === "batch_room_edits")
 		) {
 			const text = messageText(entry.message);
 			if (text) items.push({ id: entry.id, kind: "status", text });
 		}
 		if (
 			entry.message.role === "toolResult" &&
-			entry.message.toolName === "replace_object" &&
+			(entry.message.toolName === "replace_object" ||
+				(entry.message.toolName === "batch_room_edits" &&
+					entry.message.details &&
+					typeof entry.message.details === "object" &&
+					"actions" in entry.message.details &&
+					Array.isArray(entry.message.details.actions) &&
+					entry.message.details.actions.includes("replace"))) &&
 			!entry.message.isError
 		) {
 			const details = entry.message.details;

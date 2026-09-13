@@ -14,7 +14,9 @@ import {
 	type AgentPromptAction,
 	SessionManagement,
 	type StudioCommand,
+	type StudioCommandEdit,
 	StudioDirectory,
+	type StudioEditResult,
 	StudioSession,
 	type StudioTransform,
 	Transcript,
@@ -41,7 +43,8 @@ interface Scenario {
 	reloadAdapterAfter?: boolean;
 	expect: {
 		commands: {
-			action: "move" | "rotate" | "remove" | "add" | "duplicate";
+			action: "move" | "rotate" | "remove" | "replace" | "add" | "duplicate" | "batch";
+			edits?: StudioCommandEdit[];
 			objectId?: string;
 			position?: number[];
 			rotation?: number[];
@@ -241,6 +244,7 @@ if (values.help) {
 							request.tools?.map((tool) => tool.name).sort(),
 							[
 								"add_object",
+								"batch_room_edits",
 								"duplicate_object",
 								"get_product_details",
 								"get_room_context",
@@ -365,6 +369,7 @@ if (values.help) {
 			const actualCommands = emitted.map((command) => ({
 				action: command.action.type,
 				...(command.objectId ? { objectId: command.objectId } : {}),
+				...(command.action.type === "batch" ? { edits: command.action.edits } : {}),
 				...(command.action.type === "move"
 					? { position: command.action.position }
 					: command.action.type === "rotate"
@@ -382,51 +387,79 @@ if (values.help) {
 			// All fields outside independently declared expected mutations must survive byte-for-value.
 			const preservedBefore = structuredClone(before);
 			const preservedAfter = structuredClone(after);
-			for (const expected of scenario.expect.commands.filter((command) => command.status === "saved")) {
+			const createdIds: string[] = [];
+			for (const expected of scenario.expect.commands.flatMap((command, commandIndex) => {
+				if (command.status !== "saved") return [];
+				const saved = adapter.results[emitted[commandIndex]?.commandId ?? ""]?.result;
+				const evidence: StudioEditResult[] =
+					saved?.status === "saved" ? (saved.kind === "batch" ? saved.results : [saved]) : [];
+				return command.action === "batch"
+					? (command.edits ?? []).map((edit, index) => ({
+							evidence: evidence[index],
+							catalogId:
+								edit.action.type === "replace" || edit.action.type === "add"
+									? edit.action.catalogId
+									: undefined,
+							action: edit.action.type,
+							objectId: edit.objectId,
+							position: edit.action.type === "move" ? edit.action.position : undefined,
+							rotation: edit.action.type === "rotate" ? edit.action.rotation : undefined,
+							quantity:
+								edit.action.type === "add" || edit.action.type === "duplicate"
+									? edit.action.quantity
+									: undefined,
+							sourceObjectId: edit.action.type === "duplicate" ? edit.action.sourceObjectId : undefined,
+						}))
+					: [{ ...command, evidence: evidence[0] }];
+			})) {
 				if (expected.action === "remove") {
 					preservedBefore.objects = preservedBefore.objects.filter((object) => object.id !== expected.objectId);
 					preservedBefore.selectedObjectIds = preservedBefore.selectedObjectIds.filter(
 						(id) => id !== expected.objectId,
 					);
 				} else if (expected.action === "add" || expected.action === "duplicate") {
-					const created = preservedAfter.objects.filter(
-						(object) => !before.objects.some((entry) => entry.id === object.id),
-					);
+					const created = expected.evidence?.kind === "create" ? expected.evidence.created : [];
+					createdIds.push(...created.map((item) => item.objectId));
 					assertions.push({
 						assertion: "created instance count",
 						passed: created.length === (expected.quantity ?? 1),
 						expected: expected.quantity ?? 1,
-						actual: created.map((object) => object.id),
+						actual: created.map((object) => object.objectId),
 					});
 					assertions.push({
 						assertion: "created instance IDs are distinct",
-						passed: new Set(created.map((object) => object.id)).size === created.length,
+						passed: new Set(created.map((object) => object.objectId)).size === created.length,
 						expected: created.length,
-						actual: created.map((object) => object.id),
+						actual: created.map((object) => object.objectId),
 					});
-					if (expected.action === "duplicate" && expected.sourceObjectId) {
-						const sourceBefore = before.objects.find((object) => object.id === expected.sourceObjectId);
-						const sourceAfter = preservedAfter.objects.find((object) => object.id === expected.sourceObjectId);
-						assertions.push(...assertJson(sourceBefore, sourceAfter, [{ path: "", unchanged: true }]));
-					}
-					preservedAfter.objects = preservedAfter.objects.filter((object) =>
-						before.objects.some((entry) => entry.id === object.id),
-					);
+				} else if (expected.action === "replace") {
+					const object = preservedBefore.objects.find((entry) => entry.id === expected.objectId);
+					if (object) object.product = { catalogId: expected.catalogId!, price: null };
 				} else {
 					const object = preservedBefore.objects.find((object) => object.id === expected.objectId);
-					const savedObject = preservedAfter.objects.find((object) => object.id === expected.objectId);
 					const field = expected.action === "move" ? "position" : "rotation";
 					assertions.push(
-						...assertJson(null, savedObject?.[field], [
-							{ path: "", equals: expected[field], tolerance: field === "position" ? 0.0001 : 0.000001 },
-						]),
+						...assertJson(
+							null,
+							expected.evidence?.kind === "edit" ? expected.evidence.after?.[field] : undefined,
+							[{ path: "", equals: expected[field], tolerance: field === "position" ? 0.0001 : 0.000001 }],
+						),
 					);
-					if (object && savedObject) {
-						object[field] = expected[field] as [number, number, number];
-						savedObject[field] = expected[field] as [number, number, number];
-					}
+					if (object) object[field] = expected[field] as [number, number, number];
 				}
 			}
+			const newIds = after.objects
+				.filter((object) => !before.objects.some((entry) => entry.id === object.id))
+				.map((object) => object.id);
+			assertions.push(...assertJson(null, newIds, [{ path: "", equals: createdIds }]));
+			assertions.push({
+				assertion: "all created IDs are distinct",
+				passed: new Set(createdIds).size === createdIds.length,
+				expected: createdIds.length,
+				actual: new Set(createdIds).size,
+			});
+			preservedAfter.objects = preservedAfter.objects.filter((object) => !createdIds.includes(object.id));
+
 			if (scenario.expect.commands.some((command) => command.status === "saved"))
 				preservedBefore.revision = preservedAfter.revision;
 			assertions.push(...assertJson(preservedBefore, preservedAfter, [{ path: "", unchanged: true }]));

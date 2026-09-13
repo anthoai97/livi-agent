@@ -798,6 +798,7 @@ it("upgrades an old empty allowlist while keeping an admitted generation's captu
 				"get_room_context",
 				"search_catalog",
 				"get_product_details",
+				"batch_room_edits",
 			]);
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
 				stopReason: "toolUse",
@@ -1517,7 +1518,7 @@ it.each(["rejected", "unknown"] as const)(
 	},
 );
 
-it("refuses an unadmitted replacement but allows an admitted selection after recommendation search", async () => {
+it("requires a chosen product for replacement and accepts a card selection after recommendation search", async () => {
 	const { runtime, fake, faux } = await fixture();
 	for (const action of [
 		undefined,
@@ -1555,6 +1556,105 @@ it("refuses an unadmitted replacement but allows an admitted selection after rec
 		catalogId: "new-sofa",
 		expectedCatalogId: "catalog-chair",
 	});
+});
+
+it.each(["replace_object", "batch_room_edits"])(
+	"%s replaces named recommendations repeatedly without card actions",
+	async (toolName) => {
+		const products = ["Wool Rug", "Minimalist Wool Rug"].map((name, index) => ({
+			catalogId: `rug-${index}`,
+			name,
+			category: "rug",
+			dimensions: null,
+			imageUrl: null,
+			productUrl: null,
+			imageRef: null,
+			price: null,
+			style: null,
+			color: null,
+			materials: null,
+			shape: null,
+			availableColors: null,
+			description: null,
+			reasons: [],
+		}));
+		const catalog = createMemoryCatalogAccess(products);
+		const search = vi.spyOn(catalog, "search");
+		const { runtime, fake, faux } = await fixture(undefined, catalog);
+		fake.state.snapshot.objects[0]!.category = "rug";
+		fake.state.snapshot.objects[0]!.name = "Rug";
+		fake.state.snapshot.selectedObjectIds = ["chair-2"];
+		faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("search_catalog", { purpose: "replacement", targetObjectId: "chair-1", category: "rug" }),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Here are two rugs."),
+		]);
+		await prompt(runtime, "Show options to replace the rug");
+		await runtime.lane.waitForIdle(context);
+		for (const product of products) {
+			const args = { objectId: "chair-1", catalogId: product.catalogId };
+			faux.setResponses([
+				fauxAssistantMessage(
+					fauxToolCall(
+						toolName,
+						toolName === "batch_room_edits" ? { edits: [{ type: "replace", ...args }] } : args,
+					),
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("Replaced the rug."),
+			]);
+			await prompt(runtime, `replac ewith ${product.name}`);
+			await runtime.lane.waitForIdle(context);
+		}
+		expect(search).toHaveBeenCalledTimes(1);
+		expect(fake.state.commands).toHaveLength(2);
+		for (const [index, command] of fake.state.commands.entries()) {
+			const action = {
+				type: "replace",
+				catalogId: `rug-${index}`,
+				expectedCatalogId: index ? "rug-0" : "catalog-chair",
+			};
+			expect(command.expectedRevision).toBe(String(index + 1));
+			expect(command.action).toEqual(
+				toolName === "batch_room_edits" ? { type: "batch", edits: [{ objectId: "chair-1", action }] } : action,
+			);
+		}
+		expect(fake.state.snapshot.objects[0]!.product?.catalogId).toBe("rug-1");
+		expect(fake.state.snapshot.objects[1]).toEqual(room().objects[1]);
+	},
+);
+
+it.each(["replace_object", "batch_room_edits"])("%s cannot override a product chosen by card", async (toolName) => {
+	const { runtime, fake, faux } = await fixture();
+	const args = { objectId: "chair-1", catalogId: "different-product" };
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall(toolName, toolName === "batch_room_edits" ? { edits: [{ type: "replace", ...args }] } : args),
+			{ stopReason: "toolUse" },
+		),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("Do not change the admitted catalog product");
+			return fauxAssistantMessage("The selected product must be preserved.");
+		},
+	]);
+	await runtime.controller.prompt(
+		{
+			message: "Replace with this",
+			action: {
+				type: "replace_asset",
+				selectedProductId: "chosen-product",
+				targetObjectId: "chair-1",
+				designId: "simulated-room",
+				expectedRevision: "1",
+				expectedCatalogId: "catalog-chair",
+			},
+		},
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
 });
 
 it.each(["restore", "wrong-object", "missing-command", "missing-product"])(
@@ -1764,6 +1864,8 @@ it("duplicates one source without changing it and ignores later undo of an older
 it.each([
 	["add_object", {}],
 	["add_object", { catalogId: "invented-lamp", quantity: 1 }],
+	["replace_object", { objectId: "chair-1", catalogId: "invented-rug" }],
+	["replace_object", { objectId: "chair-1", catalogId: "rug", originalCommandId: "saved-replacement" }],
 	["duplicate_object", {}],
 	["duplicate_object", { objectId: "missing-chair" }],
 ])("rejects invalid %s without mutation", async (name, args) => {
@@ -1826,9 +1928,13 @@ it("refuses add reversal through originalCommandId without mutation", async () =
 	expect(fake.state.snapshot.objects).toEqual(room().objects);
 });
 
-it.each(["verified", "missing", "different"])(
-	"adds only the exact product verified by a successful details lookup: %s",
-	async (scenario) => {
+it.each(
+	["add_object", "replace_object", "batch_room_edits"].flatMap((toolName) =>
+		["verified", "missing", "different"].map((scenario) => ({ toolName, scenario })),
+	),
+)(
+	"$toolName accepts only the exact product verified by a successful details lookup: $scenario",
+	async ({ toolName, scenario }) => {
 		const catalog = createMemoryCatalogAccess([
 			{
 				catalogId: "remembered-sofa",
@@ -1864,13 +1970,22 @@ it.each(["verified", "missing", "different"])(
 					(message) => message.role === "toolResult" && message.toolName === "get_product_details",
 				);
 				expect(result).toMatchObject({ isError: scenario === "missing" });
-				return fauxAssistantMessage(fauxToolCall("add_object", { catalogId, quantity: 1 }), {
-					stopReason: "toolUse",
-				});
+				const edit = { type: "replace", objectId: "chair-1", catalogId };
+				return fauxAssistantMessage(
+					fauxToolCall(
+						toolName,
+						toolName === "add_object"
+							? { catalogId, quantity: 1 }
+							: toolName === "batch_room_edits"
+								? { edits: [edit] }
+								: { objectId: "chair-1", catalogId },
+					),
+					{ stopReason: "toolUse" },
+				);
 			},
 			(input) => {
 				const result = input.messages.findLast(
-					(message) => message.role === "toolResult" && message.toolName === "add_object",
+					(message) => message.role === "toolResult" && message.toolName === toolName,
 				);
 				expect(result).toMatchObject({ isError: scenario !== "verified" });
 				return fauxAssistantMessage(
@@ -1884,8 +1999,344 @@ it.each(["verified", "missing", "different"])(
 		expect(search).not.toHaveBeenCalled();
 		expect(fake.state.commands).toHaveLength(scenario === "verified" ? 1 : 0);
 		if (scenario === "verified") {
-			expect(fake.state.commands[0]?.action).toEqual({ type: "add", catalogId: "remembered-sofa", quantity: 1 });
-			expect((await runtime.studio.journal.records())[0]?.result).toMatchObject({ status: "saved", kind: "create" });
+			const action = { type: "replace", catalogId: "remembered-sofa", expectedCatalogId: "catalog-chair" };
+			expect(fake.state.commands[0]?.action).toEqual(
+				toolName === "add_object"
+					? { type: "add", catalogId: "remembered-sofa", quantity: 1 }
+					: toolName === "batch_room_edits"
+						? { type: "batch", edits: [{ objectId: "chair-1", action }] }
+						: action,
+			);
+			expect((await runtime.studio.journal.records())[0]?.result).toMatchObject({ status: "saved" });
 		} else expect(fake.state.snapshot.objects).toEqual(room().objects);
 	},
 );
+
+it.each([1, 2])("preserves the admitted quantity when a batch contains %s add edits", async (addCount) => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("batch_room_edits", {
+				edits: [
+					{ type: "move", objectId: "chair-2", position: [4, 2, 0] },
+					...Array.from({ length: addCount }, () => ({ type: "add" })),
+				],
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Finished."),
+	]);
+	await runtime.controller.prompt(
+		{ message: "Add two lamps", action: { type: "add_asset", selectedProductId: "lamp", quantity: 2 } },
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	if (addCount === 1) {
+		expect(fake.state.commands).toHaveLength(1);
+		expect(fake.state.snapshot.objects).toHaveLength(4);
+		expect(fake.state.commands[0]?.action).toMatchObject({
+			type: "batch",
+			edits: [
+				{ objectId: "chair-2", action: { type: "move" } },
+				{ action: { type: "add", catalogId: "lamp", quantity: 2 } },
+			],
+		});
+	} else {
+		expect(fake.state.commands).toEqual([]);
+		expect(fake.state.snapshot).toEqual(room());
+		const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+		expect(JSON.stringify(entries)).toContain("Use one add edit for the admitted product and quantity");
+	}
+});
+
+it.each(["add_object", "batch_room_edits"])(
+	"consumes one add admission across repeated %s calls but allows a new request",
+	async (toolName) => {
+		const { runtime, fake, faux } = await fixture();
+		const args = toolName === "batch_room_edits" ? { edits: [{ type: "add" }] } : {};
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall(toolName, args), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" }),
+			(input) => {
+				expect(JSON.stringify(input.messages)).toContain("The admitted add was already submitted");
+				return fauxAssistantMessage("Added two lamps.");
+			},
+			fauxAssistantMessage(fauxToolCall("add_object", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Added two more lamps."),
+		]);
+		const request = {
+			message: "Add two lamps",
+			action: { type: "add_asset" as const, selectedProductId: "lamp", quantity: 2 },
+		};
+		await runtime.controller.prompt(request, context);
+		await runtime.lane.waitForIdle(context);
+		expect(fake.state.commands).toHaveLength(1);
+		expect(fake.state.snapshot.objects).toHaveLength(4);
+		await runtime.controller.prompt(request, context);
+		await runtime.lane.waitForIdle(context);
+		expect(fake.state.commands).toHaveLength(2);
+		expect(fake.state.snapshot.objects).toHaveLength(6);
+	},
+);
+
+it("rejects repeated replacements under one card admission before dispatch", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("batch_room_edits", {
+				edits: [
+					{ type: "replace", objectId: "chair-1" },
+					{ type: "replace", objectId: "chair-1" },
+				],
+			}),
+			{ stopReason: "toolUse" },
+		),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("Use one replace edit");
+			return fauxAssistantMessage("No changes saved.");
+		},
+	]);
+	await runtime.controller.prompt(
+		{
+			message: "Replace this chair",
+			action: {
+				type: "replace_asset",
+				selectedProductId: "new-sofa",
+				targetObjectId: "chair-1",
+				designId: "simulated-room",
+				expectedRevision: "1",
+				expectedCatalogId: "catalog-chair",
+			},
+		},
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot).toEqual(room());
+});
+
+it("batches six removals at revision 43 into one invocation and records one final result", async () => {
+	const events: Record<string, unknown>[] = [];
+	const { runtime, fake, faux } = await fixture((event, fields) => events.push({ event, ...fields }));
+	fake.state.snapshot.revision = "43";
+	fake.state.snapshot.objects = Array.from({ length: 7 }, (_, index) => ({
+		...structuredClone(room().objects[0]!),
+		id: `chair-${index}`,
+	}));
+	const edits = fake.state.snapshot.objects.slice(0, 6).map((object) => ({ type: "remove", objectId: object.id }));
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits }), { stopReason: "toolUse" }),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("Saved 6 edits");
+			expect(JSON.stringify(input.messages)).toContain("revision 49");
+			return fauxAssistantMessage("Removed six chairs.");
+		},
+	]);
+	await prompt(runtime, "Remove the first six chairs together");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(fake.state.commands[0]).toMatchObject({ expectedRevision: "43", action: { type: "batch" } });
+	expect(fake.state.snapshot.revision).toBe("49");
+	expect(fake.state.snapshot.objects.map((object) => object.id)).toEqual(["chair-6"]);
+	expect(events.filter((event) => event.event === "tool.result")).toEqual([
+		expect.objectContaining({ toolName: "batch_room_edits", editCount: 6, revision: "49" }),
+	]);
+});
+
+it("replans a whole stale batch and restores its indexed move and rotation after reopening", async () => {
+	const { runtime, fake, faux, repo, stored, broker, models } = await fixture();
+	const edits = [
+		{ type: "move", objectId: "chair-1", position: [2, 2, 0] },
+		{ type: "rotate", objectId: "chair-1", rotation: [0, 0, 1] },
+	];
+	faux.setResponses([
+		() => {
+			fake.state.snapshot.revision = "2";
+			fake.state.snapshot.objects[0]!.position = [4, 2, 0];
+			return fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits }), { stopReason: "toolUse" });
+		},
+		fauxAssistantMessage(fauxToolCall("get_room_context", {}), { stopReason: "toolUse" }),
+		fauxAssistantMessage(
+			fauxToolCall("batch_room_edits", { edits: [{ ...edits[0], position: [5, 2, 0] }, edits[1]] }),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Saved both changes."),
+	]);
+	await prompt(runtime, "Move and rotate the chair");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands.map((command) => command.expectedRevision)).toEqual(["1", "2"]);
+	const saved = (await runtime.studio.journal.records())[0]!;
+	expect(saved.result).toMatchObject({
+		kind: "batch",
+		revision: "4",
+		results: [
+			{ before: { position: [4, 2, 0] }, after: { position: [5, 2, 0], rotation: [0, 0, 0] } },
+			{ before: { position: [5, 2, 0], rotation: [0, 0, 0] }, after: { rotation: [0, 0, 1] } },
+		],
+	});
+	await runtime.close();
+	const recovered = await DecoratorSession.create({
+		session: await repo.open(stored.metadata, context),
+		models,
+		studio: broker,
+	});
+	cleanup.push(() => recovered.close());
+	faux.setResponses([
+		(input) => {
+			expect(input.systemPrompt).toContain('"originalEditIndex":1');
+			return fauxAssistantMessage(
+				fauxToolCall("batch_room_edits", {
+					edits: [
+						{
+							type: "rotate",
+							objectId: "chair-1",
+							originalCommandId: saved.command.commandId,
+							originalEditIndex: 1,
+						},
+						{
+							type: "move",
+							objectId: "chair-1",
+							originalCommandId: saved.command.commandId,
+							originalEditIndex: 0,
+						},
+					],
+				}),
+				{ stopReason: "toolUse" },
+			);
+		},
+		fauxAssistantMessage("Restored both edits."),
+	]);
+	await prompt(recovered, "Undo both edits");
+	await recovered.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(3);
+	expect(fake.state.snapshot.objects[0]!.position).toEqual([4, 2, 0]);
+	expect(fake.state.snapshot.objects[0]!.rotation).toEqual([0, 0, 0]);
+});
+
+it.each([
+	[
+		{ type: "remove", objectId: "chair-1" },
+		{ type: "move", objectId: "chair-1", position: [2, 2, 0] },
+	],
+	[
+		{ type: "duplicate", objectId: "chair-1", quantity: 50 },
+		{ type: "remove", objectId: "chair-2" },
+	],
+	[
+		{ type: "move", objectId: "chair-1", position: [2, 2, 0] },
+		{ type: "replace", objectId: "chair-2" },
+	],
+])("rejects an invalid or oversized batch before preparing any edit: %j", async (...edits) => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("No edits saved."),
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toEqual([]);
+	expect(fake.state.snapshot).toEqual(room());
+});
+
+it("does not replay an unknown batch under a new invocation in the same request", async () => {
+	const { runtime, fake, faux } = await fixture();
+	fake.state.hold = true;
+	const edits = [
+		{ type: "move", objectId: "chair-1", position: [2, 2, 0] },
+		{ type: "remove", objectId: "chair-2" },
+	];
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits }), { stopReason: "toolUse" }),
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("outcome_unknown");
+			return fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits }), { stopReason: "toolUse" });
+		},
+		(input) => {
+			expect(JSON.stringify(input.messages)).toContain("mutation_blocked");
+			return fauxAssistantMessage("Save outcome unknown.");
+		},
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands).toHaveLength(1);
+	expect(fake.state.snapshot.revision).toBe("3");
+	await fake.releaseResult();
+	expect(await runtime.studio.journal.records()).toEqual([]);
+});
+
+it("limits stale batch retries to two without dispatching a fourth batch", async () => {
+	const { runtime, fake, faux, broker } = await fixture();
+	const send = vi.spyOn(broker, "execute").mockImplementation(async (command) => ({
+		commandId: command.commandId,
+		status: "rejected",
+		error: { code: "stale_revision", message: "Changed" },
+	}));
+	const response = () =>
+		fauxAssistantMessage(fauxToolCall("batch_room_edits", { edits: [{ type: "remove", objectId: "chair-1" }] }), {
+			stopReason: "toolUse",
+		});
+	faux.setResponses([
+		response(),
+		response(),
+		response(),
+		response(),
+		fauxAssistantMessage("Stopped after stale retry limit."),
+	]);
+	await prompt(runtime);
+	await runtime.lane.waitForIdle(context);
+	expect(send).toHaveBeenCalledTimes(3);
+	expect(fake.state.snapshot).toEqual(room());
+});
+
+it("restores a replacement inside a saved batch using its indexed product history", async () => {
+	const { runtime, fake, faux } = await fixture();
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("batch_room_edits", {
+				edits: [
+					{ type: "move", objectId: "chair-2", position: [4, 2, 0] },
+					{ type: "replace", objectId: "chair-1" },
+				],
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Saved both edits."),
+	]);
+	await runtime.controller.prompt(
+		{
+			message: "Replace the chair and move the other chair",
+			action: {
+				type: "replace_asset",
+				selectedProductId: "new-chair",
+				targetObjectId: "chair-1",
+				designId: "simulated-room",
+				expectedRevision: "1",
+				expectedCatalogId: "catalog-chair",
+			},
+		},
+		context,
+	);
+	await runtime.lane.waitForIdle(context);
+	const original = fake.state.commands[0]!;
+	faux.setResponses([
+		fauxAssistantMessage(
+			fauxToolCall("replace_object", {
+				objectId: "chair-1",
+				originalCommandId: original.commandId,
+				originalEditIndex: 1,
+			}),
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Restored the previous product."),
+	]);
+	await prompt(runtime, "Undo just the replacement");
+	await runtime.lane.waitForIdle(context);
+	expect(fake.state.commands[1]).toMatchObject({
+		objectId: "chair-1",
+		reversesCommandId: original.commandId,
+		reversesEditIndex: 1,
+		action: { type: "replace", catalogId: "catalog-chair", expectedCatalogId: "new-chair" },
+	});
+	expect(fake.state.snapshot.objects[0]?.product?.catalogId).toBe("catalog-chair");
+	expect(fake.state.snapshot.objects[1]?.position).toEqual([4, 2, 0]);
+});

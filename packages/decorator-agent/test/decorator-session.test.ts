@@ -15,6 +15,7 @@ const toolNames = [
 	"get_room_context",
 	"search_catalog",
 	"get_product_details",
+	"batch_room_edits",
 ];
 afterEach(async () => {
 	for (const close of cleanup.splice(0).reverse()) await close();

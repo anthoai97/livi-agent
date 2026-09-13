@@ -28,15 +28,15 @@ Search purposes: discovery, recommendation, replacement. Follow-ups: show more, 
 | `move_object` | Absolute position in metres (+X right, +Y back, +Z up) |
 | `rotate_object` | Yaw only: `[0, 0, radians]` |
 | `remove_object` | Remove one placed instance; not reversible |
-| `replace_object` | Swap a placed object with a product chosen on a recommendation card |
+| `replace_object` | Swap a placed object with a product chosen in chat or on a card |
 | `add_object` | Place a chosen catalog product in quantity 1–50 |
 | `duplicate_object` | Copy one placed instance without changing the original |
 
 Named objects come from room inventory. Studio selection is optional. Studio owns save/validation; the agent sends one command and reports the saved/error result.
 
-Replace flow: search → cards with “Replace with this” → `replace_asset` selection → `replace_object`. Product ID comes from the card, not the model.
+Replace flow: search → user chooses a product by name or card → `replace_object`. Typed choices use a catalog ID verified against saved recommendations or a successful product-details lookup. Clear choices execute without another confirmation; ambiguous names require clarification in chat. Card buttons are optional, including for subsequent replacements.
 
-Add flow: search → cards with “Add to room” and quantity → `add_asset` selection → `add_object`. Without a card, `add_object` may use a catalog ID from saved search results. Duplicate copies one inventory instance through Studio’s existing copy/save path, keeping the original. Live Studio re-resolves catalog facts on save. Add and duplicate cannot be reversed.
+Add flow: search → cards with “Add to room” and quantity → `add_asset` selection → `add_object`. Without a card, `add_object` uses the typed choice’s catalog ID from saved search results or a successful product-details lookup. Duplicate copies one inventory instance through Studio’s existing copy/save path, keeping the original. Live Studio re-resolves catalog facts on save. Add and duplicate cannot be reversed.
 
 ## Undo
 
