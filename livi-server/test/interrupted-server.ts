@@ -11,5 +11,10 @@ faux.setResponses([
 		return fauxAssistantMessage("unreachable");
 	},
 ]);
-const server = await startLiviServer({ dataDirectory: process.argv[2], port: 0, models });
+const server = await startLiviServer({
+	dataDirectory: process.argv[2],
+	sessionDatabaseUrl: process.env.SESSION_DATABASE_URL,
+	port: 0,
+	models,
+});
 process.send?.({ type: "ready", serverId: server.serverId, port: server.port });

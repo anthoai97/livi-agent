@@ -1,6 +1,6 @@
 # PostgreSQL session storage
 
-**Status: planned.** Persist agent sessions in PostgreSQL while retaining one active owner per session. Conversations, branches, durable operation state, and usage survive server restart without changing agent behavior.
+**Status: implemented; local validation recorded below.** Persist agent sessions in PostgreSQL while retaining one active owner per session. Conversations, branches, durable operation state, and usage survive server restart without changing agent behavior.
 
 ## Scope and decisions
 
@@ -45,3 +45,11 @@ Use `gh stack` for dependent PRs: package/schema/storage with conformance → re
 ## Unresolved questions
 
 - None blocking. First version uses opt-in PostgreSQL, a fresh session store, and one active server per database/schema. Importing existing SQLite sessions and multi-server operation require separate plans.
+
+## Validation evidence
+
+- Real PostgreSQL: 50 storage/repository conformance and failure/concurrency tests passed.
+- Nine server acceptance tests passed: WebSocket persistence, graceful restart, killed-process durable-operation recovery, startup failures; SQLite paths retained.
+- SQLite suite: 105 passed. Full affected server suite: 30 passed, two opt-in cases skipped without their database URLs.
+- Explicit integration command and PostgreSQL CI service; backend/server typechecks included in `pnpm check`.
+- Delivery stack: storage → repository/forks → server/acceptance/docs.

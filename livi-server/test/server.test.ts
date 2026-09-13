@@ -22,8 +22,18 @@ import {
 	StudioDirectory,
 	Transcript,
 } from "@livi/decorator-agent/contracts";
+import { Pool } from "pg";
 import { WebSocket } from "ws";
 import { startLiviServer } from "../src/server.ts";
+
+async function resetPostgresSessions(connectionString: string) {
+	const pool = new Pool({ connectionString, max: 1 });
+	try {
+		await pool.query("DROP SCHEMA IF EXISTS livi_sessions CASCADE");
+	} finally {
+		await pool.end();
+	}
+}
 
 function transport(port: number): ByteTransportFactory {
 	return (handlers) =>
@@ -92,156 +102,180 @@ function messages(transcript: Transcript): string[] {
 	});
 }
 
-test(
-	"real WebSocket routes isolate conversations, stream, reconnect, and survive SQLite restart",
-	{ timeout: 30_000 },
-	async (t) => {
-		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-server-"));
-		const faux = fauxProvider({
-			provider: "google",
-			models: [{ id: "gemini-3.8-flash" }],
-			tokensPerSecond: 100,
-			tokenSize: { min: 1, max: 1 },
-		});
-		const models = createModels();
-		models.setProvider(faux.provider);
-		const started = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<void>();
-		faux.setResponses([
-			async () => {
-				started.resolve();
-				await release.promise;
-				return fauxAssistantMessage("A quiet room with warm lighting.");
-			},
-		]);
-		const errors: Error[] = [];
-		let server = await startLiviServer({ dataDirectory, port: 0, models, onError: (error) => errors.push(error) });
-		const connections: Awaited<ReturnType<typeof connect>>[] = [];
-		t.after(async () => {
-			release.resolve();
-			await Promise.all(connections.map(({ client }) => client.dispose()));
-			await server.close();
-			await rm(dataDirectory, { recursive: true, force: true });
-		});
-		const first = await connect(server);
-		const second = await connect(server);
-		connections.push(first, second);
-		const roomA = await first.management.create({}, context);
-		const roomB = await second.management.create({}, context);
-		assert.notEqual(roomA.sessionId, roomB.sessionId);
-		await eventually(() => second.directory.state.value?.sessions.length === 2);
-		const a = await attach(first, roomA.sessionId);
-		const b = await attach(second, roomB.sessionId);
-		const malformed = await a.controller.prompt(
-			{ message: "Add lamps", action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 0 } },
-			context,
-		);
-		assert.deepEqual(malformed, {
-			accepted: false,
-			operationId: null,
-			error: { code: "invalid_message", message: "add_asset quantity must be a positive integer" },
-		});
-		assert.equal(faux.state.callCount, 0, "Malformed wire actions must not start generation");
-		const response = await a.controller.prompt({ message: "Design a quiet room" }, context);
-		assert.equal(response.accepted, true);
-		await started.promise;
-		const busy = await a.controller.prompt({ message: "Another request" }, context);
-		assert.equal(busy.accepted, false);
-		if (!busy.accepted) assert.equal(busy.error.code, "lane_busy");
-		await eventually(() => messages(a.transcript).includes("Design a quiet room"));
-		assert.deepEqual(messages(b.transcript), []);
+for (const sessionDatabaseUrl of [
+	undefined,
+	...(process.env.TEST_SESSION_DATABASE_URL ? [process.env.TEST_SESSION_DATABASE_URL] : []),
+]) {
+	test(
+		`real WebSocket routes isolate conversations, stream, reconnect, and survive ${sessionDatabaseUrl ? "PostgreSQL" : "SQLite"} restart`,
+		{ timeout: 30_000 },
+		async (t) => {
+			if (sessionDatabaseUrl) await resetPostgresSessions(sessionDatabaseUrl);
+			const dataDirectory = await mkdtemp(join(tmpdir(), "livi-server-"));
+			const faux = fauxProvider({
+				provider: "google",
+				models: [{ id: "gemini-3.8-flash" }],
+				tokensPerSecond: 100,
+				tokenSize: { min: 1, max: 1 },
+			});
+			const models = createModels();
+			models.setProvider(faux.provider);
+			const started = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			faux.setResponses([
+				async () => {
+					started.resolve();
+					await release.promise;
+					return fauxAssistantMessage("A quiet room with warm lighting.");
+				},
+			]);
+			const errors: Error[] = [];
+			let server = await startLiviServer({
+				sessionDatabaseUrl,
+				dataDirectory,
+				port: 0,
+				models,
+				onError: (error) => errors.push(error),
+			});
+			const connections: Awaited<ReturnType<typeof connect>>[] = [];
+			t.after(async () => {
+				release.resolve();
+				await Promise.all(connections.map(({ client }) => client.dispose()));
+				await server.close();
+				await rm(dataDirectory, { recursive: true, force: true });
+			});
+			const first = await connect(server);
+			const second = await connect(server);
+			connections.push(first, second);
+			const roomA = await first.management.create({}, context);
+			const roomB = await second.management.create({}, context);
+			assert.notEqual(roomA.sessionId, roomB.sessionId);
+			await eventually(() => second.directory.state.value?.sessions.length === 2);
+			const a = await attach(first, roomA.sessionId);
+			const b = await attach(second, roomB.sessionId);
+			const malformed = await a.controller.prompt(
+				{ message: "Add lamps", action: { type: "add_asset", selectedProductId: "lamp-1", quantity: 0 } },
+				context,
+			);
+			assert.deepEqual(malformed, {
+				accepted: false,
+				operationId: null,
+				error: { code: "invalid_message", message: "add_asset quantity must be a positive integer" },
+			});
+			assert.equal(faux.state.callCount, 0, "Malformed wire actions must not start generation");
+			const response = await a.controller.prompt({ message: "Design a quiet room" }, context);
+			assert.equal(response.accepted, true);
+			await started.promise;
+			const busy = await a.controller.prompt({ message: "Another request" }, context);
+			assert.equal(busy.accepted, false);
+			if (!busy.accepted) assert.equal(busy.error.code, "lane_busy");
+			await eventually(() => messages(a.transcript).includes("Design a quiet room"));
+			assert.deepEqual(messages(b.transcript), []);
 
-		first.client.disconnect();
-		await first.binding.rebind(false, context);
-		await eventually(() => server.connectionCount === 1);
-		const detached = await attach(second, roomA.sessionId);
-		let detachedUpdates = 0;
-		detached.transcript.state.subscribe(() => {
-			detachedUpdates += 1;
-		});
-		await detached.binding.dispose(context);
-		const updatesAtDispose = detachedUpdates;
-		await second.management.detach(context);
-		const observer = await attach(second, roomA.sessionId);
-		let sawStreaming = false;
-		const stop = observer.transcript.state.subscribe((state) => {
-			if (
-				state.snapshot?.operation?.streamingMessage?.content.some(
-					(block) => block.type === "text" && block.text.length > 0,
+			first.client.disconnect();
+			await first.binding.rebind(false, context);
+			await eventually(() => server.connectionCount === 1);
+			const detached = await attach(second, roomA.sessionId);
+			let detachedUpdates = 0;
+			detached.transcript.state.subscribe(() => {
+				detachedUpdates += 1;
+			});
+			await detached.binding.dispose(context);
+			const updatesAtDispose = detachedUpdates;
+			await second.management.detach(context);
+			const observer = await attach(second, roomA.sessionId);
+			let sawStreaming = false;
+			const stop = observer.transcript.state.subscribe((state) => {
+				if (
+					state.snapshot?.operation?.streamingMessage?.content.some(
+						(block) => block.type === "text" && block.text.length > 0,
+					)
 				)
-			)
-				sawStreaming = true;
-		});
-		release.resolve();
-		await eventually(
-			() =>
-				messages(observer.transcript).includes("A quiet room with warm lighting.") &&
-				observer.transcript.state.value?.snapshot?.operation === null,
-		);
-		stop();
-		assert.equal(sawStreaming, true);
-		assert.equal(detachedUpdates, updatesAtDispose, "Disposed subscribers must receive no further stream updates");
-		assert.equal(faux.state.callCount, 1, "Disconnect must not cancel or duplicate an accepted operation");
+					sawStreaming = true;
+			});
+			release.resolve();
+			await eventually(
+				() =>
+					messages(observer.transcript).includes("A quiet room with warm lighting.") &&
+					observer.transcript.state.value?.snapshot?.operation === null,
+			);
+			stop();
+			assert.equal(sawStreaming, true);
+			assert.equal(detachedUpdates, updatesAtDispose, "Disposed subscribers must receive no further stream updates");
+			assert.equal(faux.state.callCount, 1, "Disconnect must not cancel or duplicate an accepted operation");
 
-		await first.client.reconnect();
-		await first.binding.rebind(true, context);
-		const reconnected = await attach(first, roomA.sessionId);
-		assert.deepEqual(messages(reconnected.transcript), ["Design a quiet room", "A quiet room with warm lighting."]);
-		await reconnected.binding.dispose(context);
-		await first.client.dispose();
-		await second.client.dispose();
-		await eventually(() => server.connectionCount === 0);
-		const serverId = server.serverId;
-		await server.close();
-		server = await startLiviServer({ dataDirectory, port: 0, models, onError: (error) => errors.push(error) });
-		assert.equal(server.serverId, serverId);
-		const restored = await connect(server);
-		connections.push(restored);
-		assert.deepEqual(
-			restored.directory.state.value?.sessions.map((session) => session.sessionId).sort(),
-			[roomA.sessionId, roomB.sessionId].sort(),
-		);
-		const restoredA = await attach(restored, roomA.sessionId);
-		assert.deepEqual(messages(restoredA.transcript), ["Design a quiet room", "A quiet room with warm lighting."]);
-		assert.equal(faux.state.callCount, 1, "Reopening a completed session must not restart generation");
-		faux.appendResponses([
-			(request) => {
-				assert.deepEqual(
-					request.messages.map((message) =>
-						typeof message.content === "string"
-							? message.content
-							: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
-					),
-					["Design a quiet room", "A quiet room with warm lighting.", "Which lamp fits?"],
-				);
-				return fauxAssistantMessage("Choose a warm floor lamp.");
-			},
-		]);
-		assert.equal((await restoredA.controller.prompt({ message: "Which lamp fits?" }, context)).accepted, true);
-		await eventually(
-			() =>
-				messages(restoredA.transcript).includes("Choose a warm floor lamp.") &&
-				restoredA.transcript.state.value?.snapshot?.operation === null,
-		);
-		const restoredB = await attach(restored, roomB.sessionId);
-		assert.deepEqual(messages(restoredB.transcript), []);
-		faux.appendResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "Invalid API key" })]);
-		assert.equal((await restoredB.controller.prompt({ message: "Show a provider failure" }, context)).accepted, true);
-		await eventually(() => restoredB.transcript.state.value?.snapshot?.lastResult?.status === "failed");
-		assert.match(restoredB.transcript.state.value?.snapshot?.lastResult?.error?.message ?? "", /Invalid API key/);
-		assert.equal(restoredB.transcript.state.value?.snapshot?.operation, null);
-		faux.appendResponses([fauxAssistantMessage("The next request succeeds.")]);
-		assert.equal((await restoredB.controller.prompt({ message: "Try again" }, context)).accepted, true);
-		await eventually(
-			() =>
-				messages(restoredB.transcript).includes("The next request succeeds.") &&
-				restoredB.transcript.state.value?.snapshot?.operation === null,
-		);
-		await assert.rejects(restored.management.attach("missing-session", context), /Unknown conversation/);
-		assert.equal(faux.state.callCount, 4);
-		assert.deepEqual(errors, []);
-	},
-);
+			await first.client.reconnect();
+			await first.binding.rebind(true, context);
+			const reconnected = await attach(first, roomA.sessionId);
+			assert.deepEqual(messages(reconnected.transcript), [
+				"Design a quiet room",
+				"A quiet room with warm lighting.",
+			]);
+			await reconnected.binding.dispose(context);
+			await first.client.dispose();
+			await second.client.dispose();
+			await eventually(() => server.connectionCount === 0);
+			const serverId = server.serverId;
+			await server.close();
+			server = await startLiviServer({
+				sessionDatabaseUrl,
+				dataDirectory,
+				port: 0,
+				models,
+				onError: (error) => errors.push(error),
+			});
+			assert.equal(server.serverId, serverId);
+			const restored = await connect(server);
+			connections.push(restored);
+			assert.deepEqual(
+				restored.directory.state.value?.sessions.map((session) => session.sessionId).sort(),
+				[roomA.sessionId, roomB.sessionId].sort(),
+			);
+			const restoredA = await attach(restored, roomA.sessionId);
+			assert.deepEqual(messages(restoredA.transcript), ["Design a quiet room", "A quiet room with warm lighting."]);
+			assert.equal(faux.state.callCount, 1, "Reopening a completed session must not restart generation");
+			faux.appendResponses([
+				(request) => {
+					assert.deepEqual(
+						request.messages.map((message) =>
+							typeof message.content === "string"
+								? message.content
+								: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
+						),
+						["Design a quiet room", "A quiet room with warm lighting.", "Which lamp fits?"],
+					);
+					return fauxAssistantMessage("Choose a warm floor lamp.");
+				},
+			]);
+			assert.equal((await restoredA.controller.prompt({ message: "Which lamp fits?" }, context)).accepted, true);
+			await eventually(
+				() =>
+					messages(restoredA.transcript).includes("Choose a warm floor lamp.") &&
+					restoredA.transcript.state.value?.snapshot?.operation === null,
+			);
+			const restoredB = await attach(restored, roomB.sessionId);
+			assert.deepEqual(messages(restoredB.transcript), []);
+			faux.appendResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "Invalid API key" })]);
+			assert.equal(
+				(await restoredB.controller.prompt({ message: "Show a provider failure" }, context)).accepted,
+				true,
+			);
+			await eventually(() => restoredB.transcript.state.value?.snapshot?.lastResult?.status === "failed");
+			assert.match(restoredB.transcript.state.value?.snapshot?.lastResult?.error?.message ?? "", /Invalid API key/);
+			assert.equal(restoredB.transcript.state.value?.snapshot?.operation, null);
+			faux.appendResponses([fauxAssistantMessage("The next request succeeds.")]);
+			assert.equal((await restoredB.controller.prompt({ message: "Try again" }, context)).accepted, true);
+			await eventually(
+				() =>
+					messages(restoredB.transcript).includes("The next request succeeds.") &&
+					restoredB.transcript.state.value?.snapshot?.operation === null,
+			);
+			await assert.rejects(restored.management.attach("missing-session", context), /Unknown conversation/);
+			assert.equal(faux.state.callCount, 4);
+			assert.deepEqual(errors, []);
+		},
+	);
+}
 
 test(
 	"provider optional fields stream over WebSocket and preserve signatures after reconnect",
@@ -325,73 +359,77 @@ test(
 	},
 );
 
-test(
-	"a killed server resumes the durable accepted operation without duplicating the user message",
-	{ timeout: 30_000 },
-	async (t) => {
-		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-recovery-"));
-		const child = fork(new URL("./interrupted-server.ts", import.meta.url), [dataDirectory], {
-			execArgv: ["--import", "tsx"],
-			stdio: ["ignore", "ignore", "inherit", "ipc"],
-		});
-		let restarted: Awaited<ReturnType<typeof startLiviServer>> | undefined;
-		const connections: Awaited<ReturnType<typeof connect>>[] = [];
-		t.after(async () => {
+for (const sessionDatabaseUrl of [
+	undefined,
+	...(process.env.TEST_SESSION_DATABASE_URL ? [process.env.TEST_SESSION_DATABASE_URL] : []),
+]) {
+	test(
+		`a killed ${sessionDatabaseUrl ? "PostgreSQL" : "SQLite"} server resumes the durable accepted operation without duplicating the user message`,
+		{ timeout: 30_000 },
+		async (t) => {
+			if (sessionDatabaseUrl) await resetPostgresSessions(sessionDatabaseUrl);
+			const dataDirectory = await mkdtemp(join(tmpdir(), "livi-recovery-"));
+			const child = fork(new URL("./interrupted-server.ts", import.meta.url), [dataDirectory], {
+				env: { ...process.env, SESSION_DATABASE_URL: sessionDatabaseUrl },
+				execArgv: ["--import", "tsx"],
+				stdio: ["ignore", "ignore", "inherit", "ipc"],
+			});
+			let restarted: Awaited<ReturnType<typeof startLiviServer>> | undefined;
+			const connections: Awaited<ReturnType<typeof connect>>[] = [];
+			t.after(async () => {
+				child.kill("SIGKILL");
+				await Promise.all(connections.map(({ client }) => client.dispose()));
+				await restarted?.close();
+				await rm(dataDirectory, { recursive: true, force: true });
+			});
+			const [ready] = (await once(child, "message")) as [{ type: string; serverId: string; port: number }];
+			assert.equal(ready.type, "ready");
+			const first = await connect(ready);
+			connections.push(first);
+			const room = await first.management.create({}, context);
+			const attached = await attach(first, room.sessionId);
+			const generating = once(child, "message");
+			const action = {
+				type: "replace_asset" as const,
+				designId: "simulated-room",
+				expectedRevision: "1",
+				expectedCatalogId: null,
+				selectedProductId: "sofa-123",
+				targetObjectId: "sofa-placed",
+			};
+			const accepted = await attached.controller.prompt({ message: "Keep my room design", action }, context);
+			assert.equal(accepted.accepted, true);
+			assert.deepEqual((await generating)[0], { type: "generating" });
+			const exited = once(child, "exit");
 			child.kill("SIGKILL");
-			await Promise.all(connections.map(({ client }) => client.dispose()));
-			await restarted?.close();
-			await rm(dataDirectory, { recursive: true, force: true });
-		});
-		const [ready] = (await once(child, "message")) as [{ type: string; serverId: string; port: number }];
-		assert.equal(ready.type, "ready");
-		const first = await connect(ready);
-		connections.push(first);
-		const room = await first.management.create({}, context);
-		const attached = await attach(first, room.sessionId);
-		const generating = once(child, "message");
-		const action = {
-			type: "replace_asset" as const,
-			designId: "simulated-room",
-			expectedRevision: "1",
-			expectedCatalogId: null,
-			selectedProductId: "sofa-123",
-			targetObjectId: "sofa-placed",
-		};
-		const accepted = await attached.controller.prompt({ message: "Keep my room design", action }, context);
-		assert.equal(accepted.accepted, true);
-		assert.deepEqual((await generating)[0], { type: "generating" });
-		const exited = once(child, "exit");
-		child.kill("SIGKILL");
-		await exited;
-		await first.client.dispose();
+			await exited;
+			await first.client.dispose();
 
-		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
-		const models = createModels();
-		models.setProvider(faux.provider);
-		faux.setResponses([
-			(request) => {
-				assert.ok(
-					request.systemPrompt?.includes(JSON.stringify(action)),
-					"SQLite recovery must retain wire selection",
-				);
-				assert.ok(request.systemPrompt?.includes("Interrupted-request replay blocked: true"));
-				return fauxAssistantMessage("Recovered room design");
-			},
-		]);
-		restarted = await startLiviServer({ dataDirectory, port: 0, models });
-		assert.equal(restarted.serverId, ready.serverId);
-		const recovered = await connect(restarted);
-		connections.push(recovered);
-		const session = await attach(recovered, room.sessionId);
-		await eventually(
-			() =>
-				messages(session.transcript).includes("Recovered room design") &&
-				session.transcript.state.value?.snapshot?.operation === null,
-		);
-		assert.deepEqual(messages(session.transcript), ["Keep my room design", "Recovered room design"]);
-		assert.equal(faux.state.callCount, 1);
-	},
-);
+			const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
+			const models = createModels();
+			models.setProvider(faux.provider);
+			faux.setResponses([
+				(request) => {
+					assert.ok(request.systemPrompt?.includes(JSON.stringify(action)), "Recovery must retain wire selection");
+					assert.ok(request.systemPrompt?.includes("Interrupted-request replay blocked: true"));
+					return fauxAssistantMessage("Recovered room design");
+				},
+			]);
+			restarted = await startLiviServer({ sessionDatabaseUrl, dataDirectory, port: 0, models });
+			assert.equal(restarted.serverId, ready.serverId);
+			const recovered = await connect(restarted);
+			connections.push(recovered);
+			const session = await attach(recovered, room.sessionId);
+			await eventually(
+				() =>
+					messages(session.transcript).includes("Recovered room design") &&
+					session.transcript.state.value?.snapshot?.operation === null,
+			);
+			assert.deepEqual(messages(session.transcript), ["Keep my room design", "Recovered room design"]);
+			assert.equal(faux.state.callCount, 1);
+		},
+	);
+}
 
 test(
 	"old unresolved history survives restart without locking or reconciling the room",

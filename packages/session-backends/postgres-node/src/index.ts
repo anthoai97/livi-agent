@@ -1,2 +1,2 @@
+export { type PostgresSessionMetadata, PostgresSessionRepo, type PostgresSessionRepoOptions } from "./repo.ts";
 export { PostgresStorage } from "./storage.ts";
-export { PostgresSessionRepo, type PostgresSessionMetadata, type PostgresSessionRepoOptions } from "./repo.ts";

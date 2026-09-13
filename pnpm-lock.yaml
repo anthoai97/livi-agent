@@ -81,6 +81,9 @@ importers:
       '@earendil-works/pi-server':
         specifier: workspace:*
         version: link:../packages/server
+      '@earendil-works/pi-session-backend-postgres-node':
+        specifier: workspace:*
+        version: link:../packages/session-backends/postgres-node
       '@earendil-works/pi-session-backend-sqlite-node':
         specifier: workspace:*
         version: link:../packages/session-backends/sqlite-node

@@ -18,7 +18,8 @@
     "@google/genai": "1.52.0",
     "@livi/decorator-agent": "workspace:*",
     "pg": "8.23.0",
-    "ws": "8.18.3"
+    "ws": "8.18.3",
+    "@earendil-works/pi-session-backend-postgres-node": "workspace:*"
   },
   "devDependencies": {
     "@earendil-works/pi-client": "workspace:*",

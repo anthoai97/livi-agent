@@ -20,7 +20,8 @@
     "pack:studio": "node scripts/pack-studio-contracts.mjs",
     "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:session:postgres": "node scripts/test-session-postgres.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.5",

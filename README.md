@@ -18,6 +18,7 @@ Open http://127.0.0.1:5173. Run `pnpm start` to build and serve the app at http:
 Optional settings in `.env`:
 
 - `CATALOG_DATABASE_URL`: enable catalog search.
+- `SESSION_DATABASE_URL`: opt in to [PostgreSQL session storage](packages/session-backends/postgres-node/README.md); absent keeps SQLite.
 - `STUDIO_ALLOWED_ORIGINS`: allow your Studio origin, then connect Studio and click **Attach design**.
 - `LIVI_DEBUG=1`: show readable agent execution steps in the terminal. Leave `LIVI_DEBUG_PROMPTS` unset to avoid raw request dumps.
 
