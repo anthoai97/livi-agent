@@ -20,7 +20,8 @@
     "build": "tsgo -p tsconfig.build.json && node scripts/copy-migrations.mjs",
     "test": "vitest --run",
     "coverage": "vitest --run --coverage",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run clean && npm run build",
+    "typecheck": "tsgo -p tsconfig.test.json --noEmit"
   },
   "author": "Earendil Works",
   "license": "MIT",
