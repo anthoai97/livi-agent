@@ -141,3 +141,57 @@ it("matches complete brand/store names with whitespace and case normalization al
 	expect((await catalog.search({ brand: "unknown" })).products).toEqual([]);
 	expect(() => normalizeCatalogSearchRequest({ brand: " \t " })).toThrow(/non-empty/);
 });
+
+it("lists distinct actual source names, counts normalized groups, and traverses more than twenty brands", async () => {
+	const base: CatalogProduct = {
+		catalogId: "p",
+		name: "Product",
+		source: null,
+		imageUrl: null,
+		imageRef: null,
+		productUrl: null,
+		dimensions: null,
+		price: null,
+		category: null,
+		style: null,
+		color: null,
+		materials: null,
+		shape: null,
+		availableColors: null,
+		description: null,
+		reasons: [],
+	};
+	const sources = [
+		null,
+		"",
+		" \t ",
+		"IKEA",
+		" ikea\t",
+		"ACME\n\u00a0Store",
+		"acme store",
+		"Modway",
+		"Modway Furniture",
+		...Array.from({ length: 23 }, (_, i) => `Store ${String(i).padStart(2, "0")}`),
+	];
+	const catalog = createMemoryCatalogAccess(sources.map((source, i) => ({ ...base, catalogId: String(i), source })));
+	const first = await catalog.listBrands();
+	expect(first.kind).toBe("catalog_brands");
+	expect(first.brands).toHaveLength(20);
+	expect(first.pagination).toEqual({ limit: 20, offset: 0, nextOffset: 20, exhausted: false });
+	const last = await catalog.listBrands({ offset: first.pagination.nextOffset });
+	expect(last.pagination.exhausted).toBe(true);
+	const brands = [...first.brands, ...last.brands];
+	expect(brands).toHaveLength(27);
+	expect(new Set(brands.map((b) => b.brand)).size).toBe(27);
+	expect(brands.find((b) => b.brand === "ikea")).toMatchObject({ productCount: 2 });
+	expect(brands.find((b) => b.brand === "acme store")).toMatchObject({ productCount: 2 });
+	for (const brand of brands) {
+		expect(sources).toContain(brand.source);
+		expect((await catalog.search({ brand: brand.brand })).products.length).toBe(brand.productCount);
+	}
+	expect((await createMemoryCatalogAccess([]).listBrands()).brands).toEqual([]);
+	await expect(catalog.listBrands({ limit: 21 })).rejects.toThrow(/limit/);
+	const controller = new AbortController();
+	controller.abort();
+	await expect(catalog.listBrands({}, controller.signal)).rejects.toThrow();
+});

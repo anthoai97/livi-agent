@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
 	type CatalogAccess,
+	type CatalogBrand,
 	type CatalogDimensions,
 	CatalogError,
 	type CatalogProduct,
@@ -9,12 +10,13 @@ import {
 	catalogReasons,
 	catalogResolvedConstraints,
 	httpUrl,
+	MAX_CATALOG_LIMIT,
 	metreDimension,
 	type NormalizedCatalogSearch,
 	normalizeCatalogSearchRequest,
 	sanitizeCatalogProduct,
 } from "@livi/decorator-agent";
-import { Pool, type PoolClient, type PoolConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from "pg";
 
 import { assertCatalogEmbedding, type CatalogModels } from "./catalog-models.js";
 
@@ -23,6 +25,8 @@ const REGISTRY = "pipeline.design_asset_registry";
 const SELECT_COLUMNS =
 	"asset_id, name, (SELECT catalog_name FROM pipeline.pipeline_assets p WHERE p.asset_id = r.asset_id) AS catalog_name, source, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
 const ACTIVE_REGISTRY_ROW = ["COALESCE(is_decor_item, false) = false", "COALESCE(is_deleted, false) = false"] as const;
+// Match JavaScript whitespace exactly, including Unicode spaces, independent of database locale.
+const NORMALIZED_SOURCE = `lower(btrim(regexp_replace(source, U&'[\\0009-\\000D\\0020\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]+', ' ', 'g')))`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DesignAssetRegistryRow {
@@ -99,6 +103,35 @@ export function createPostgresCatalogAccess(
 	} = {},
 ): CatalogAccess {
 	return {
+		async listBrands(request = {}, signal) {
+			signal?.throwIfAborted();
+			const { limit, offset } = normalizeCatalogSearchRequest({
+				limit: request.limit ?? MAX_CATALOG_LIMIT,
+				offset: request.offset,
+			});
+			const rows = await catalogQuery<CatalogBrand>(
+				pool,
+				`
+SELECT brand, source, "productCount" FROM (
+  SELECT ${NORMALIZED_SOURCE} AS brand, min(source COLLATE "C") AS source, count(*)::integer AS "productCount"
+  FROM ${REGISTRY} r
+  WHERE ${ACTIVE_REGISTRY_ROW.join(" AND ")}
+    AND ${NORMALIZED_SOURCE} <> ''
+    AND EXISTS (SELECT 1 FROM pipeline.asset_embeddings e WHERE e.asset_id = r.asset_id AND e.embedding IS NOT NULL)
+  GROUP BY ${NORMALIZED_SOURCE}
+) brands
+ORDER BY brand COLLATE "C"
+LIMIT $1 OFFSET $2`,
+				[limit + 1, offset],
+				signal,
+			);
+			const brands = rows.slice(0, limit);
+			return {
+				kind: "catalog_brands",
+				brands,
+				pagination: { limit, offset, nextOffset: offset + brands.length, exhausted: rows.length <= limit },
+			};
+		},
 		async search(request, signal) {
 			signal?.throwIfAborted();
 			const requestId = randomUUID();
@@ -266,10 +299,7 @@ export function searchSql(
 		);
 	}
 	if (request.brand) {
-		// Match JavaScript \s exactly, including Unicode spaces, independent of the database locale.
-		where.push(
-			`lower(btrim(regexp_replace(source, U&'[\\0009-\\000D\\0020\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]+', ' ', 'g'))) = ${add(request.brand)}`,
-		);
+		where.push(`${NORMALIZED_SOURCE} = ${add(request.brand)}`);
 	}
 	if (request.color) {
 		const param = add(request.color.toLowerCase());
@@ -327,12 +357,12 @@ function pushDimension(
 	if (max !== undefined) where.push(`${column} ${exclusiveMax ? "<" : "<="} ${add(max)}`);
 }
 
-async function catalogQuery(
+async function catalogQuery<Row extends QueryResultRow = DesignAssetRegistryRow>(
 	pool: Pool,
 	text: string,
 	values: Array<string | number | string[]>,
 	signal: AbortSignal | undefined,
-): Promise<DesignAssetRegistryRow[]> {
+): Promise<Row[]> {
 	return catalogDeadline(
 		async (active) => {
 			let stage: "connect" | "retrieve" = "connect";
@@ -349,7 +379,7 @@ async function catalogQuery(
 				active.throwIfAborted();
 				stage = "retrieve";
 				await client.query("SET default_transaction_read_only TO on");
-				const result = await client.query<DesignAssetRegistryRow>({ text, values });
+				const result = await client.query<Row>({ text, values });
 				active.throwIfAborted();
 				return result.rows;
 			} catch (error) {

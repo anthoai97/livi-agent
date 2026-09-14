@@ -610,3 +610,77 @@ test("brand predicate is literal and precedes vector ranking and limit with othe
 	assert.match(where, /round\(price::numeric \* 100\) <= \$/);
 	assert.ok(compiled.text.indexOf("\nORDER BY") < compiled.text.indexOf("\nLIMIT"));
 });
+
+test(
+	"lists only distinct searchable brands from active indexed inventory without pgvector or an embedding call",
+	{ timeout: 60000 },
+	async (t) => {
+		const cluster = await startInitdbCluster();
+		if (!cluster) return t.skip("No disposable PostgreSQL available");
+		const admin = new Pool({ connectionString: cluster.adminUrl });
+		const pool = createCatalogPool(parseCatalogDatabaseUrl(cluster.readUrl));
+		t.after(async () => {
+			await pool.end();
+			await admin.end();
+			await cluster.stop();
+		});
+		await setupRegistry(cluster.adminUrl);
+		// Listing only requires a nonnull embedding, so this isolated fixture needs no vector extension.
+		await admin.query("CREATE TABLE pipeline.asset_embeddings (asset_id uuid PRIMARY KEY, embedding text)");
+		const sources = [
+			"IKEA",
+			" ikea\t",
+			"ACME\n\u00a0Store",
+			"acme store",
+			"Modway",
+			"Modway Furniture",
+			...Array.from({ length: 23 }, (_, i) => `Store ${String(i).padStart(2, "0")}`),
+			null,
+			" \t\uFEFF ",
+			"Deleted",
+			"Unindexed",
+			"Null embedding",
+		];
+		for (const [index, source] of sources.entries()) {
+			const id = `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`;
+			await admin.query(
+				"INSERT INTO pipeline.pipeline_assets (asset_id, name, source, is_deleted) VALUES ($1, 'Product', $2, $3)",
+				[id, source, source === "Deleted"],
+			);
+			if (source !== "Unindexed")
+				await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, $2)", [
+					id,
+					source === "Null embedding" ? null : "indexed",
+				]);
+		}
+		const decorId = "bbbbbbbb-bbbb-4bbb-8bbb-000000000001";
+		await admin.query(
+			"INSERT INTO pipeline.decor_items (asset_id, name, source) VALUES ($1, 'Decor', 'Decor only')",
+			[decorId],
+		);
+		await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, 'indexed')", [decorId]);
+		await admin.query("GRANT SELECT ON pipeline.asset_embeddings TO livi_catalog_read");
+
+		const catalog = createPostgresCatalogAccess(pool);
+		const first = await catalog.listBrands();
+		assert.equal(first.kind, "catalog_brands");
+		assert.equal(first.brands.length, 20);
+		assert.equal(first.pagination.exhausted, false);
+		const last = await catalog.listBrands({ offset: first.pagination.nextOffset });
+		assert.equal(last.pagination.exhausted, true);
+		const brands = [...first.brands, ...last.brands];
+		assert.equal(brands.length, 27);
+		assert.equal(new Set(brands.map((b) => b.brand)).size, 27);
+		assert.equal(brands.find((b) => b.brand === "ikea")?.productCount, 2);
+		assert.equal(brands.find((b) => b.brand === "acme store")?.productCount, 2);
+		assert.ok(brands.some((b) => b.brand === "modway"));
+		assert.ok(brands.some((b) => b.brand === "modway furniture"));
+		assert.ok(brands.every((b) => sources.includes(b.source)));
+		assert.ok(!brands.some((b) => /deleted|unindexed|null embedding|decor only|ikea store/.test(b.brand)));
+		assert.deepEqual((await catalog.listBrands({ offset: 27 })).brands, []);
+		await assert.rejects(catalog.listBrands({ offset: -1 }), /invalid_arguments/);
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(catalog.listBrands({}, controller.signal));
+	},
+);

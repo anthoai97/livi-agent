@@ -266,3 +266,30 @@ it("publishes full product details to the UI while feeding bounded text to the m
 		await repo.close(context);
 	}
 });
+
+it("bounds listing pages without truncating searchable brand names and preserves a continuation for omitted labels", () => {
+	const brands = Array.from({ length: 20 }, (_, i) => ({
+		brand: `${i}-${"brand".repeat(40)}`,
+		source: `${i}-${"Brand".repeat(40)}`,
+		productCount: 1,
+	}));
+	const payload = {
+		kind: "catalog_brands" as const,
+		brands,
+		pagination: { limit: 20, offset: 20, nextOffset: 40, exhausted: false },
+	};
+	const encoded = catalogModelContext(payload, 2000);
+	const result = JSON.parse(encoded) as {
+		brands: typeof brands;
+		omitted: number;
+		nextOffset: number;
+		pagination: typeof payload.pagination;
+	};
+	expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(2000);
+	expect(result.brands.length).toBeGreaterThan(0);
+	expect(result.omitted).toBeGreaterThan(0);
+	expect(result.brands).toEqual(brands.slice(0, result.brands.length));
+	expect(result.nextOffset).toBe(20 + result.brands.length);
+	expect(result.pagination).toEqual(payload.pagination);
+	expect(payload.brands).toHaveLength(20);
+});

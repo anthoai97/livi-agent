@@ -172,7 +172,23 @@ export interface CatalogRecommendationDetails {
 	requestedQuantity?: number;
 }
 
+export interface CatalogBrand {
+	/** Complete normalized value accepted by the search brand filter. */
+	brand: string;
+	/** Original representative registry brand/store label. */
+	source: string;
+	productCount: number;
+}
+
+export type CatalogBrandListRequest = Pick<CatalogSearchRequest, "limit" | "offset">;
+export interface CatalogBrandListResult {
+	kind: "catalog_brands";
+	brands: CatalogBrand[];
+	pagination: CatalogPagination;
+}
+
 export interface CatalogAccess {
+	listBrands(request?: CatalogBrandListRequest, signal?: AbortSignal): Promise<CatalogBrandListResult>;
 	search(request: CatalogSearchRequest, signal?: AbortSignal): Promise<CatalogSearchResult>;
 	getProduct(catalogId: string, signal?: AbortSignal): Promise<CatalogProduct>;
 }
@@ -320,12 +336,46 @@ export function unavailableCatalogAccess(): CatalogAccess {
 	const unavailable = () => {
 		throw new CatalogError("catalog_unavailable", "Catalog is not configured");
 	};
-	return { search: unavailable, getProduct: unavailable };
+	return { search: unavailable, getProduct: unavailable, listBrands: unavailable };
 }
 
 export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAccess {
 	const records = products.map((product) => ({ ...sanitizeCatalogProduct(product), reasons: [] as string[] }));
 	return {
+		async listBrands(request = {}, signal) {
+			signal?.throwIfAborted();
+			const { limit, offset } = normalizeCatalogSearchRequest({
+				limit: request.limit ?? MAX_CATALOG_LIMIT,
+				offset: request.offset,
+			});
+			const grouped = new Map<string, CatalogBrand>();
+			for (const product of records) {
+				const source = product.source ?? "";
+				const brand = normalizeCatalogBrand(source);
+				if (!brand) continue;
+				const existing = grouped.get(brand);
+				if (existing) {
+					existing.productCount++;
+					if (source < existing.source) existing.source = source;
+				} else grouped.set(brand, { brand, source, productCount: 1 });
+			}
+			const brands = [...grouped.values()].sort((a, b) => {
+				if (a.brand < b.brand) return -1;
+				if (a.brand > b.brand) return 1;
+				return 0;
+			});
+			const page = brands.slice(offset, offset + limit);
+			return {
+				kind: "catalog_brands",
+				brands: page,
+				pagination: {
+					limit,
+					offset,
+					nextOffset: offset + page.length,
+					exhausted: offset + page.length >= brands.length,
+				},
+			};
+		},
 		async search(request, signal) {
 			signal?.throwIfAborted();
 			const normalized = normalizeCatalogSearchRequest(request);
@@ -353,6 +403,11 @@ export function createMemoryCatalogAccess(products: CatalogProduct[]): CatalogAc
 			return sanitizeCatalogProduct({ ...product, reasons: [] });
 		},
 	};
+}
+
+/** Same whitespace normalization is used by the Postgres source expression. No aliases. */
+export function normalizeCatalogBrand(value: string): string {
+	return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): NormalizedCatalogSearch {
@@ -391,7 +446,7 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 		query,
 		category,
 		categories: category ? equivalentCategories(category) : undefined,
-		brand: optionalText(request.brand)?.replace(/\s+/g, " ").toLowerCase(),
+		brand: request.brand === undefined ? undefined : normalizeCatalogBrand(optionalText(request.brand)!),
 		color,
 		style,
 		material,
@@ -415,7 +470,7 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 
 export function catalogProductMatches(product: CatalogProduct, request: NormalizedCatalogSearch): boolean {
 	if (request.excludeIds.includes(product.catalogId)) return false;
-	if (request.brand && product.source?.trim().replace(/\s+/g, " ").toLowerCase() !== request.brand) return false;
+	if (request.brand && normalizeCatalogBrand(product.source ?? "") !== request.brand) return false;
 	if (request.categories) {
 		const category = product.category ? equivalentCategories(product.category)[0] : undefined;
 		if (!category || !request.categories.includes(category)) return false;

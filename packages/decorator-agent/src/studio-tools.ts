@@ -3,6 +3,7 @@ import type { AgentHarnessTool, AgentHarnessToolInvocation } from "@earendil-wor
 import { type Static, Type } from "typebox";
 import {
 	type CatalogAccess,
+	type CatalogBrandListResult,
 	type CatalogDetailResult,
 	CatalogError,
 	type CatalogRecommendationDetails,
@@ -173,6 +174,13 @@ interface EditInput {
 	create?: StudioCreateAction;
 }
 
+const catalogBrandsSchema = Type.Object(
+	{
+		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+		offset: Type.Optional(Type.Integer({ minimum: 0 })),
+	},
+	{ additionalProperties: false },
+);
 const catalogDetailSchema = Type.Object({ catalogId: Type.String({ minLength: 1 }) }, { additionalProperties: false });
 const roomContextSchema = Type.Object(
 	{
@@ -809,6 +817,18 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 				return payload;
 			}),
 	};
+	const brands: AgentHarnessTool<StudioToolContext, typeof catalogBrandsSchema> = {
+		name: "list_catalog_brands",
+		label: "List catalog brands/stores",
+		replay: "safe",
+		parameters: catalogBrandsSchema,
+		description:
+			"List actual brand/store source labels and product counts in the searchable catalog. Call before answering which brands/stores are available; never infer inventory from familiar companies, websites, or previous assistant claims. Works without Studio, does not search products or change the room. Results are paginated (20 by default); use pagination.nextOffset until exhausted before claiming a brand is absent or a list complete. An empty filtered product search does not establish brand absence. Use this evidence before naming available alternatives; labels are not verified manufacturers and aliases are not guessed.",
+		execute: (_id, args, _update, toolContext, invocation, context) =>
+			runCatalogTool("list_catalog_brands", args, toolContext, invocation, context, (catalog, signal) =>
+				catalog.listBrands(args, signal),
+			),
+	};
 	const details: AgentHarnessTool<StudioToolContext, typeof catalogDetailSchema> = {
 		name: "get_product_details",
 		label: "Get product details",
@@ -859,7 +879,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 			);
 		},
 	};
-	return [move, rotate, remove, replace, add, duplicate, refresh, search, details, batch];
+	return [move, rotate, remove, replace, add, duplicate, refresh, search, details, brands, batch];
 }
 
 async function resolveAddAction(
@@ -948,7 +968,7 @@ function resolveDuplicateAction(
 	};
 }
 
-async function runCatalogTool<T extends CatalogRecommendationDetails | CatalogDetailResult>(
+async function runCatalogTool<T extends CatalogRecommendationDetails | CatalogDetailResult | CatalogBrandListResult>(
 	toolName: string,
 	args: Record<string, unknown>,
 	{ studio, catalog }: StudioToolContext,
@@ -996,7 +1016,8 @@ function wrapCatalogError(error: unknown, signal: AbortSignal | undefined): Cata
 	return new CatalogError("query_failed", "Catalog query failed");
 }
 
-function productIds(payload: CatalogRecommendationDetails | CatalogDetailResult): string[] {
+function productIds(payload: CatalogRecommendationDetails | CatalogDetailResult | CatalogBrandListResult): string[] {
+	if ("brands" in payload) return [];
 	return "products" in payload ? payload.products.map((product) => product.catalogId) : [payload.product.catalogId];
 }
 
@@ -1124,6 +1145,10 @@ For furniture discovery and recommendations, speak like a thoughtful interior de
 After showing options, ask one short, relevant question to help refine them. Choose the most useful unknown from color, budget, style, materials, size, brand, or use case; offer two or three easy directions when helpful. For example: "What matters most for your new sofa: a particular look, your budget, or space to stretch out?" Adapt to the conversation instead of repeating a fixed script or listing every preference at once. Use what the user has already shared and do not ask again for known requirements. When the brief is already detailed, ask about a meaningful remaining tradeoff only if useful. Do not delay an explicit product choice or room edit with discovery questions.
 Use each answer to refine the options, carrying forward earlier explicit preferences unless the user changes them. For a new search that adds color, budget, material, or size constraints, include the prior applicable filters and replacement target as well as the new constraint. Use brand for explicit brand/store requirements ("Show IKEA sofas"); keep descriptive comparisons ("like IKEA") and use-case preferences in query. Brand matches the full registry source label with case and whitespace normalization; source can be a brand or store, not a verified manufacturer. Do not guess aliases. Cheaper, smaller, and more preserve brand via followUp. For "Try Article instead", start a new search without followUp, changing brand and preserving other explicit filters and the replacement target. Only describe matches supported by supplied product facts. If no products are returned, explain briefly and ask which constraint the user would relax rather than silently dropping it.
 
+Catalog availability:
+Before answering which brands/stores are in this catalog, call list_catalog_brands or use a recent successful listing. For availability-only questions, list brands without product search or room actions. Never claim familiar companies, website-derived brands, style examples, or general model knowledge are available inventory. Read remaining pages before claiming a complete list or brand absence; a partial list only establishes availability for the labels shown. Counts describe searchable products, not stock or matches to other filters. If listing fails or is unavailable, say you cannot verify availability; do not invent a list. Current tool evidence overrides earlier assistant availability claims; briefly correct an earlier unsupported claim when relevant.
+An empty brand-specific product search only means no products matched those combined filters. Before declaring that brand absent or naming available alternatives, consult the brand listing. If the brand is listed, explain that the other filters may exclude its products. Do not silently drop filters. Distinguish a descriptive style reference from a claim of actual catalog availability.
+
 Execution:
 For complex tasks, identify a short sequence of steps before making changes. Execute them, verify results, and revise the remaining steps when new information appears. Continue until the requested work is completed or a specific blocker prevents progress; do not stop at a proposal when execution was requested. A request to arrange or rebalance the layout authorizes choosing positions and rotations for existing furniture. It does not authorize removing items or choosing new products unless requested. Ask when ambiguity or missing information prevents a reasonable decision. An explicit, unambiguous product choice in the user's message authorizes the requested addition or replacement.
 
@@ -1136,7 +1161,7 @@ Room coordinates are metres from the floor front-left: +X right, +Y back, +Z up.
 
 Catalog and selection:
 Users can choose products by typing their names; Add to room and Replace with this buttons are optional. If a typed choice uniquely identifies a saved recommendation, execute add_object or replace_object with its exact catalogId and the current room state without requiring a click or another confirmation. For example, after replacing a rug, "replace with Minimalist Wool Rug" selects that named recommendation and replaces the current rug again. Resolve the target from the conversation and current inventory, preserving the previously discussed object when it still exists. If multiple products share a name, clarify using price, dimensions, or color; never guess. For an earlier product outside the active saved recommendations, call get_product_details using its exact known catalogId before acting. Do not search_catalog or show new cards merely to retrieve a known choice. If the product identity or room target is missing or ambiguous, ask a concise question that can be answered in chat; never require a card click.
-search_catalog and get_product_details read products without changing the room and work without Studio. For a new addition or replacement with no chosen product, search and present options before adding or replacing anything. Reversing a saved replacement uses action history instead of search; duplication uses an existing room instance. For admitted add_asset or replace_asset selections, execute the corresponding tool with the admitted selection. Never remove the current object to prepare a replacement. Keep the replacement target in resolvedConstraints.target; never retarget it from a later selection or attachment.
+list_catalog_brands reads available brand/store labels; search_catalog and get_product_details read products without changing the room and work without Studio. For a new addition or replacement with no chosen product, search and present options before adding or replacing anything. Reversing a saved replacement uses action history instead of search; duplication uses an existing room instance. For admitted add_asset or replace_asset selections, execute the corresponding tool with the admitted selection. Never remove the current object to prepare a replacement. Keep the replacement target in resolvedConstraints.target; never retarget it from a later selection or attachment.
 Preserve the user's intent in the search query. Use hard filters only for explicit constraints, keeping the requested new category distinct from the current object's category. Use USD for price bounds when currency is unspecified. Never invent a budget, copy the room budget into a search, or convert currencies. For an initially cheaper replacement, read the current product's price with get_product_details, then search with that price minus one minor unit as the maximum. If the price or target is unknown, ask for the missing target or budget. Apply bounds in the search so cards meet them too.
 For show_more, cheaper, or smaller follow-ups, use followUp and the prior searchId to retain saved constraints. Identify referenceCatalogId when the comparison product is ambiguous and dimension for smaller. Use get_product_details for missing product facts. Results are vector-similar indexed candidates, not verified attribute or fit matches. Describe only supplied facts, distinguish actual asset color from retailer options, and never invent products. If retrieval.truncated is true, show_more can retrieve further candidates. Refer to product names so users can match them to cards.
 

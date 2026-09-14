@@ -1095,3 +1095,78 @@ it("accepts an Article replacement search retaining explicit constraints and tar
 		});
 	}
 });
+
+it("exposes inventory listing without Studio, publishes structured evidence, and keeps saved recommendations active", async () => {
+	const catalog = createMemoryCatalogAccess([
+		{ ...usdCheap, source: "IKEA" },
+		{ ...usdMini, source: "Article" },
+	]);
+	const { runtime, faux } = await session({ catalog });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", brand: "IKEA" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("One desk."),
+		(input) => {
+			expect(input.tools?.map((t) => t.name)).toContain("list_catalog_brands");
+			return fauxAssistantMessage(fauxToolCall("list_catalog_brands", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			const listing = input.messages.findLast(
+				(m) => m.role === "toolResult" && m.toolName === "list_catalog_brands",
+			);
+			expect(listing).toMatchObject({ isError: false });
+			if (listing?.role !== "toolResult" || listing.content[0]?.type !== "text") throw new Error("Missing listing");
+			expect(JSON.parse(listing.content[0].text)).toMatchObject({
+				kind: "catalog_brands",
+				brands: [
+					{ brand: "article", source: "Article", productCount: 1 },
+					{ brand: "ikea", source: "IKEA", productCount: 1 },
+				],
+				pagination: { exhausted: true },
+			});
+			return fauxAssistantMessage("Article and IKEA are listed.");
+		},
+	]);
+	await runtime.controller.prompt({ message: "Show IKEA desks" }, context);
+	await runtime.lane.waitForIdle(context);
+	const before = await loadRecommendationHistory(runtime.studio.session, context);
+	await runtime.controller.prompt({ message: "Which brands do you have?" }, context);
+	await runtime.lane.waitForIdle(context);
+	expect(await loadRecommendationHistory(runtime.studio.session, context)).toEqual(before);
+	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+	const listing = entries.find(
+		(e) => e.type === "message" && e.message.role === "toolResult" && e.message.toolName === "list_catalog_brands",
+	);
+	expect(listing).toMatchObject({ message: { details: { kind: "catalog_brands", brands: expect.any(Array) } } });
+	expect(await runtime.studio.journal.records()).toEqual([]);
+});
+
+it("brand listing propagates unavailable, query errors and cancellation instead of inventing empty inventory", async () => {
+	const tool = createStudioTools().find((t) => t.name === "list_catalog_brands")!;
+	const { runtime } = await session();
+	await expect(
+		tool.execute("call", {}, () => {}, { studio: runtime.studio, planning: undefined }, invocation, context),
+	).rejects.toMatchObject({ code: "catalog_unavailable" });
+	for (const error of [
+		new Error("private backend message"),
+		Object.assign(new Error("aborted"), { name: "AbortError" }),
+	]) {
+		const catalog = {
+			...createMemoryCatalogAccess([]),
+			listBrands: async () => {
+				throw error;
+			},
+		};
+		await expect(
+			tool.execute(
+				"call",
+				{},
+				() => {},
+				{ studio: runtime.studio, planning: undefined, catalog },
+				invocation,
+				context,
+			),
+		).rejects.toMatchObject({ code: error.name === "AbortError" ? "cancelled" : "query_failed" });
+	}
+});

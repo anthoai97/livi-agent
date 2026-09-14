@@ -199,3 +199,36 @@ test("debug logs time embedding and retrieval without product facts, queries, or
 		1,
 	);
 });
+
+test("brand listing needs no embedding provider and preserves empty/error outcomes", async () => {
+	const { pool, sql, client } = fixture([]);
+	const access = createPostgresCatalogAccess(pool, {
+		models: {
+			embedQuery: async () => {
+				throw new Error("Listing must not embed");
+			},
+		},
+	});
+	assert.deepEqual(await access.listBrands(), {
+		kind: "catalog_brands",
+		brands: [],
+		pagination: { limit: 20, offset: 0, nextOffset: 0, exhausted: true },
+	});
+	assert.match(sql[0]!.text, /EXISTS.*asset_embeddings.*embedding IS NOT NULL/);
+	assert.doesNotMatch(sql[0]!.text, /<=>/);
+	for (const [code, expected] of [
+		["42501", "unauthorized"],
+		["57014", "timeout"],
+		["XX000", "query_failed"],
+	]) {
+		mock.method(client, "query", async () => {
+			throw Object.assign(new Error("private database detail"), { code });
+		});
+		await assert.rejects(access.listBrands(), (error: unknown) => {
+			assert.ok(error instanceof CatalogError);
+			assert.equal(error.code, expected);
+			assert.doesNotMatch(error.message, /private/);
+			return true;
+		});
+	}
+});

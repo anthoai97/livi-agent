@@ -16,11 +16,14 @@ Needs `CATALOG_DATABASE_URL` (PostgreSQL `pipeline.design_asset_registry`). If u
 | Tool | What it does |
 | --- | --- |
 | `search_catalog` | Vector search of shoppable products; filters for brand/store, category, color, style, material, size, USD price |
+| `list_catalog_brands` | Actual searchable brand/store labels and product counts, paginated; no embedding API call |
 | `get_product_details` | One product by catalog ID |
 
 Search purposes: discovery, recommendation, replacement. Follow-ups: show more, cheaper, smaller. Results render as cards. Similarity is not attribute-validated; prices are USD only.
 
 Brand/store filters use the registry `source` label: complete-name matching after trimming, collapsing whitespace, and ignoring case. Labels may identify brands or stores, not verified manufacturers. No substring matching or guessed aliases: Modway and Modway Furniture remain separate. Explicit “Show IKEA sofas” filters; “like IKEA” stays descriptive. More, cheaper, and smaller preserve the filter; “Try Article instead” starts a new search retaining other explicit constraints and the target. No matches asks which constraint to relax, without silently dropping brand. Cards and model context include the original source label.
+
+Availability answers use `list_catalog_brands` (or recent successful listing), never familiar companies from general knowledge. It groups complete normalized source names from active, non-decor products with nonempty sources and a nonnull embedding. Read all pages before declaring a brand absent or a list complete. A filtered search returning empty does not establish brand absence; other filters may explain it. Listing failures mean availability cannot be verified. Current evidence overrides earlier unsupported assistant claims. Listings work without Studio and do not create cards or replace the active recommendation history. Counts describe searchable catalog products, not retailer stock.
 
 Data audit pending: Walmart labels paired with other domains and `*_DSFabricsCIS` source names need investigation. Brand products sold through a retailer are expected. No source data rewritten.
 

@@ -798,6 +798,7 @@ it("upgrades an old empty allowlist while keeping an admitted generation's captu
 				"get_room_context",
 				"search_catalog",
 				"get_product_details",
+				"list_catalog_brands",
 				"batch_room_edits",
 			]);
 			return fauxAssistantMessage(fauxToolCall("move_object", { objectId: "chair-1", position: [2, 2, 0] }), {
@@ -1118,7 +1119,7 @@ it("never replays an old safe pending effect after restart, including model retr
 	).toBe(true);
 	expect(
 		recoveredTools
-			.filter((tool) => tool.name === "search_catalog" || tool.name === "get_product_details")
+			.filter((tool) => ["search_catalog", "get_product_details", "list_catalog_brands"].includes(tool.name))
 			.every((tool) => tool.replay === "safe"),
 	).toBe(true);
 	expect(fake.state.commands).toHaveLength(1);

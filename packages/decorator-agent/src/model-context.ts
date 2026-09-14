@@ -1,4 +1,9 @@
-import type { CatalogDetailResult, CatalogProduct, CatalogRecommendationDetails } from "./catalog.ts";
+import type {
+	CatalogBrandListResult,
+	CatalogDetailResult,
+	CatalogProduct,
+	CatalogRecommendationDetails,
+} from "./catalog.ts";
 import type { StudioPlanningSnapshot } from "./studio-journal.ts";
 
 export const CATALOG_CONTEXT_BYTES = 12_000;
@@ -63,9 +68,21 @@ function productContext(product: CatalogProduct, detailed: boolean) {
 }
 
 export function catalogModelContext(
-	payload: CatalogRecommendationDetails | CatalogDetailResult,
+	payload: CatalogRecommendationDetails | CatalogDetailResult | CatalogBrandListResult,
 	maxBytes = CATALOG_CONTEXT_BYTES,
 ): string {
+	if ("brands" in payload)
+		return modelRecords(
+			{
+				kind: payload.kind,
+				pagination: payload.pagination,
+				offset: payload.pagination.offset,
+				note: "Actual searchable catalog brand/store labels, not verified manufacturers or stock. Partial pages cannot establish absence; use nextOffset for omitted records, then pagination.nextOffset until exhausted. Counts ignore product filters. Current inventory evidence overrides earlier assistant claims.",
+			},
+			"brands",
+			payload.brands,
+			maxBytes,
+		);
 	if ("product" in payload)
 		return modelRecords({ kind: "product_details" }, "products", [productContext(payload.product, true)], maxBytes);
 	const { originalQuery, query, category, brand, color, style, material, excludeIds, target, ...constraints } =
