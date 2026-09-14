@@ -26,15 +26,4 @@ The session pool is writable, bounded to ten connections, and separate from `CAT
 
 For direct use, await `PostgresSessionRepo.connect({ connectionString })`, then use the shared create/open/list/delete/fork contract and call `repo.close(context)` at shutdown. Metadata contains an opaque stable schema identity, never connection credentials or local paths. Opening metadata from another database/schema is rejected.
 
-Full local validation (Node 24+, pnpm 10.17):
-
-```sh
-pnpm install --frozen-lockfile
-pnpm check
-TEST_SESSION_DATABASE_URL=postgres://localhost/livi_session_test pnpm test:session:postgres
-pnpm test:session
-```
-
-The explicit PostgreSQL command refuses to run without a URL and runs backend conformance/failure tests plus server WebSocket restart and killed-process recovery acceptance. Root `pnpm test` still targets `@livi/*` only.
-
 No database locks establish server ownership. Run exactly one active server per database/schema, stop it before replacement/deletion, and do not open the same session for writing through independent repositories. Distributed ownership and SQLite import remain outside this backend.
