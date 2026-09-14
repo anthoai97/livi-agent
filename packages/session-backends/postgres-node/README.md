@@ -35,6 +35,6 @@ TEST_SESSION_DATABASE_URL=postgres://localhost/livi_session_test pnpm test:sessi
 pnpm test:session
 ```
 
-The explicit PostgreSQL command refuses to run without a URL and runs backend conformance/failure tests plus server WebSocket restart and killed-process recovery acceptance. The `PostgreSQL session integration` CI job runs it with a disposable PostgreSQL service; configure that status as required in repository branch protection. Root `pnpm test` still targets `@livi/*` only.
+The explicit PostgreSQL command refuses to run without a URL and runs backend conformance/failure tests plus server WebSocket restart and killed-process recovery acceptance. Root `pnpm test` still targets `@livi/*` only.
 
 No database locks establish server ownership. Run exactly one active server per database/schema, stop it before replacement/deletion, and do not open the same session for writing through independent repositories. Distributed ownership and SQLite import remain outside this backend.

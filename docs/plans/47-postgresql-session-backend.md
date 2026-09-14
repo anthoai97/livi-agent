@@ -25,7 +25,7 @@
 
 ## Validation and completion
 
-- Run `createStorageConformance` and `createSessionRepoConformance` against a real disposable PostgreSQL database. Add an explicit backend test command and required integration-test job; root `pnpm test` currently selects only `@livi/*` packages.
+- Run `createStorageConformance` and `createSessionRepoConformance` against a real disposable PostgreSQL database. Add an explicit backend test command; root `pnpm test` currently selects only `@livi/*` packages.
 - Prove transaction rollback for invalid writes; sequence/statistics correctness including deletes; binary UTF-8 prefix ordering, pagination, and JSON round trips; independent sessions; duplicate local ownership rejection; and deletion preserving other sessions.
 - Test same-repository fork ordering and an independent snapshot while a later source commit completes. Cover branch/tree filtering and atomic destination failure.
 - Test connection loss and unknown commit outcomes without blind retries; admitted-operation draining, pool release, and startup cleanup.
@@ -47,7 +47,7 @@ Use `gh stack` for dependent PRs: package/schema/storage with conformance → re
 - Real PostgreSQL: 50 storage/repository conformance and failure/concurrency tests passed.
 - Nine server acceptance tests passed: WebSocket persistence, graceful restart, killed-process durable-operation recovery, startup failures; SQLite paths retained.
 - SQLite suite: 105 passed. Full affected server suite: 30 passed, two opt-in cases skipped without their database URLs.
-- Explicit integration command and PostgreSQL CI service; backend/server typechecks included in `pnpm check`.
+- Explicit integration command; backend/server typechecks included in `pnpm check`.
 - Delivery stack: storage → repository/forks → server/acceptance/docs.
 
 ## Extension: skip remote streaming-progress writes
