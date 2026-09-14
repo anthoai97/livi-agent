@@ -1,4 +1,9 @@
-import type { CatalogDetailResult, CatalogProduct, CatalogRecommendationDetails } from "./catalog.ts";
+import type {
+	CatalogBrandListResult,
+	CatalogDetailResult,
+	CatalogProduct,
+	CatalogRecommendationDetails,
+} from "./catalog.ts";
 import type { StudioPlanningSnapshot } from "./studio-journal.ts";
 
 export const CATALOG_CONTEXT_BYTES = 12_000;
@@ -48,6 +53,7 @@ function productContext(product: CatalogProduct, detailed: boolean) {
 	return {
 		catalogId: product.catalogId,
 		name: text(product.name),
+		source: text(product.source),
 		price: product.price,
 		dimensions: product.dimensions,
 		category: text(product.category),
@@ -62,12 +68,24 @@ function productContext(product: CatalogProduct, detailed: boolean) {
 }
 
 export function catalogModelContext(
-	payload: CatalogRecommendationDetails | CatalogDetailResult,
+	payload: CatalogRecommendationDetails | CatalogDetailResult | CatalogBrandListResult,
 	maxBytes = CATALOG_CONTEXT_BYTES,
 ): string {
+	if ("brands" in payload)
+		return modelRecords(
+			{
+				kind: payload.kind,
+				pagination: payload.pagination,
+				offset: payload.pagination.offset,
+				note: "Actual searchable catalog brand/store labels, not verified manufacturers or stock. Partial pages cannot establish absence; use nextOffset for omitted records, then pagination.nextOffset until exhausted. Counts ignore product filters. Current inventory evidence overrides earlier assistant claims.",
+			},
+			"brands",
+			payload.brands,
+			maxBytes,
+		);
 	if ("product" in payload)
 		return modelRecords({ kind: "product_details" }, "products", [productContext(payload.product, true)], maxBytes);
-	const { originalQuery, query, category, color, style, material, excludeIds, target, ...constraints } =
+	const { originalQuery, query, category, brand, color, style, material, excludeIds, target, ...constraints } =
 		payload.resolvedConstraints;
 	const metadata: Record<string, unknown> = {
 		kind: payload.kind,
@@ -77,6 +95,7 @@ export function catalogModelContext(
 			originalQuery: text(originalQuery, 512),
 			query: text(query, 512),
 			category: category?.slice(0, 8).map((entry) => text(entry)),
+			brand: text(brand),
 			color: text(color),
 			style: text(style),
 			material: text(material),
@@ -88,7 +107,7 @@ export function catalogModelContext(
 		binding: payload.binding,
 		followUp: payload.followUp,
 		shownCount: payload.shownIds.length,
-		note: "Full cards and exclusions are saved. Use followUp to preserve filters; get_product_details retrieves one exact catalogId. Retailer color options do not verify the asset variant.",
+		note: "Full cards and exclusions are saved. Use followUp to preserve filters; get_product_details retrieves one exact catalogId. Source is a brand/store label, not a verified manufacturer. Retailer color options do not verify the asset variant.",
 	};
 	if (Buffer.byteLength(JSON.stringify(metadata)) > maxBytes / 2) {
 		metadata.resolvedConstraints = {

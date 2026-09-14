@@ -16,11 +16,12 @@ import {
 } from "../src/catalog.ts";
 import { loadRecommendationHistory } from "../src/catalog-history.ts";
 import { DecoratorSession } from "../src/decorator-session.ts";
-import type {
-	StudioCommand,
-	StudioCommandResult,
-	StudioMailboxRequest,
-	StudioSnapshot,
+import {
+	STUDIO_CONTRACT_VERSION,
+	type StudioCommand,
+	type StudioCommandResult,
+	type StudioMailboxRequest,
+	type StudioSnapshot,
 } from "../src/services/studio.ts";
 import { StudioBroker } from "../src/studio-broker.ts";
 import { createStudioTools } from "../src/studio-tools.ts";
@@ -104,6 +105,7 @@ function product(catalogId: string, fields: Partial<CatalogProduct> & { name: st
 		catalogId,
 		imageUrl: null,
 		productUrl: null,
+		source: null,
 		imageRef: null,
 		dimensions: null,
 		price: null,
@@ -154,7 +156,7 @@ async function attachStudio(broker: StudioBroker) {
 	const connection = broker.attach();
 	const binding = { designId: "simulated-room", tabId: "simulated-tab" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Simulated Studio", contractVersion: 3 },
+		{ ...binding, label: "Simulated Studio", contractVersion: STUDIO_CONTRACT_VERSION },
 		context,
 	);
 	const state = {
@@ -299,6 +301,7 @@ it("search_catalog matches yellow sectionals including L-shaped and excludes dis
 		catalogId: "yellow-sectional-sofa",
 		name: "Haven Yellow Sectional Sofa",
 		imageUrl: "https://cdn.example/haven.jpg",
+		source: null,
 		imageRef: "https://cdn.example/haven.jpg",
 		productUrl: "https://shop.example/haven",
 		dimensions: { width: 2.8, depth: 1.6, height: 0.9, unit: "m" },
@@ -312,6 +315,7 @@ it("omits signed image and product URLs from catalog tool details", async () => 
 		category: "sectional",
 		color: "yellow",
 		imageUrl: "https://cdn.example/object/sign/sofa.jpg?token=secret-token&X-Amz-Signature=sig",
+		source: null,
 		imageRef: "https://cdn.example/object/sign/sofa.jpg?token=secret-token",
 		productUrl: "https://shop.example/buy?se=1&sig=abc",
 	});
@@ -320,6 +324,7 @@ it("omits signed image and product URLs from catalog tool details", async () => 
 		category: "sectional",
 		color: "yellow",
 		imageUrl: "s3://bucket/sofa.png",
+		source: null,
 		imageRef: "s3://bucket/sofa.png",
 	});
 	const result = await search(createMemoryCatalogAccess([signed, s3]), { color: "yellow", category: "sectional" });
@@ -328,11 +333,13 @@ it("omits signed image and product URLs from catalog tool details", async () => 
 	const payload = result.details as CatalogRecommendationDetails;
 	expect(payload.products.find((entry) => entry.catalogId === "signed-sectional")).toMatchObject({
 		imageUrl: null,
+		source: null,
 		imageRef: null,
 		productUrl: null,
 	});
 	expect(payload.products.find((entry) => entry.catalogId === "s3-sectional")).toMatchObject({
 		imageUrl: null,
+		source: null,
 		imageRef: "s3://bucket/sofa.png",
 	});
 });
@@ -946,12 +953,18 @@ async function compactAutomatically(runtime: DecoratorSession, faux: ReturnType<
 }
 
 it("keeps catalog follow-ups and exact comparison references after repeated automatic compaction and reload", async () => {
-	const fixture = await session({ catalog: createMemoryCatalogAccess(catalogProducts), contextWindow: 40000 });
+	const fixture = await session({
+		catalog: createMemoryCatalogAccess(catalogProducts.map((p) => ({ ...p, source: "IKEA" }))),
+		contextWindow: 40000,
+	});
 	const { runtime, faux, repo, stored, models, catalog } = fixture;
 	faux.setResponses([
-		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", maxAmountMinor: 50000, limit: 1 }), {
-			stopReason: "toolUse",
-		}),
+		fauxAssistantMessage(
+			fauxToolCall("search_catalog", { brand: "IKEA", category: "desk", maxAmountMinor: 50000, limit: 1 }),
+			{
+				stopReason: "toolUse",
+			},
+		),
 		fauxAssistantMessage("One desk."),
 	]);
 	await runtime.controller.prompt({ message: "Show desks under 500 USD" }, context);
@@ -990,10 +1003,170 @@ it("keeps catalog follow-ups and exact comparison references after repeated auto
 		await recovered.lane.waitForIdle(context);
 		const latest = (await loadRecommendationHistory(recovered.studio.session, context))[0]!;
 		expect(latest.searchId).toBe(first.searchId);
+		expect(latest.resolvedConstraints.brand).toBe("ikea");
 		expect(latest.followUp).toBe(followUp);
 		expect(latest.products.map((entry) => entry.catalogId)).toEqual(["usd-250"]);
 		if (followUp === "show_more") expect(latest.shownIds).toEqual(["usd-400", "usd-250"]);
 		else expect(latest.resolvedConstraints.maxPrice).toEqual({ amountMinor: 39999, currency: "USD" });
 		if (followUp === "smaller") expect(latest.resolvedConstraints.maxWidth).toBe(1.2);
+	}
+});
+
+it("rejects new or conflicting brands on continuations and allows the same normalized brand", async () => {
+	for (const priorBrand of [undefined, "IKEA"]) {
+		const catalog = createMemoryCatalogAccess([{ ...usdCheap, source: "IKEA" }]);
+		const { runtime, faux } = await session({ catalog });
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", brand: priorBrand }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("One desk."),
+		]);
+		await runtime.controller.prompt({ message: "Show desks" }, context);
+		await runtime.lane.waitForIdle(context);
+		const tool = createStudioTools().find((t) => t.name === "search_catalog")!;
+		const services = { studio: runtime.studio, planning: undefined, catalog };
+		for (const brand of priorBrand ? ["Article", "unknown"] : ["IKEA"]) {
+			await expect(
+				tool.execute("call", { followUp: "show_more", brand }, () => {}, services, invocation, context),
+			).rejects.toThrow(/new search without followUp/);
+		}
+		if (priorBrand) {
+			const result = await tool.execute(
+				"call",
+				{ followUp: "show_more", brand: " \tikeA\n" },
+				() => {},
+				services,
+				invocation,
+				context,
+			);
+			expect((result.details as CatalogRecommendationDetails).resolvedConstraints.brand).toBe("ikea");
+		}
+	}
+});
+
+it("accepts an Article replacement search retaining explicit constraints and target, and returns unknown brands empty", async () => {
+	const catalog = createMemoryCatalogAccess(
+		["IKEA", "Article"].map((source) =>
+			product(source, {
+				name: `${source} sofa`,
+				source,
+				category: "sofa",
+				color: "blue",
+				price: { amountMinor: 40000, currency: "USD" },
+				dimensions: { width: 2, depth: 1, height: 0.8, unit: "m" },
+			}),
+		),
+	);
+	const { runtime, faux } = await session({ catalog, studio: true });
+	const filters = {
+		purpose: "replacement",
+		targetObjectId: "sofa-1",
+		category: "sofa",
+		color: "blue",
+		maxAmountMinor: 50000,
+		maxWidth: 2,
+	};
+	for (const brand of ["IKEA", "Article", "unknown"]) {
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("search_catalog", { ...filters, brand }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Search complete."),
+		]);
+		await runtime.controller.prompt(
+			{
+				message:
+					brand === "IKEA"
+						? "Replace the sofa with a blue IKEA sofa under $500 and 2m wide"
+						: `Try ${brand} instead`,
+			},
+			context,
+		);
+		await runtime.lane.waitForIdle(context);
+		const latest = (await loadRecommendationHistory(runtime.studio.session, context))[0]!;
+		expect(latest.followUp).toBeNull();
+		expect(latest.products.map((p) => p.catalogId)).toEqual(brand === "unknown" ? [] : [brand]);
+		expect(latest.resolvedConstraints).toMatchObject({
+			brand: brand.toLowerCase(),
+			category: ["sofa", "couch", "couches"],
+			color: "blue",
+			maxPrice: { amountMinor: 50000, currency: "USD" },
+			maxWidth: 2,
+			target: { objectId: "sofa-1", designId: "simulated-room" },
+		});
+	}
+});
+
+it("exposes inventory listing without Studio, publishes structured evidence, and keeps saved recommendations active", async () => {
+	const catalog = createMemoryCatalogAccess([
+		{ ...usdCheap, source: "IKEA" },
+		{ ...usdMini, source: "Article" },
+	]);
+	const { runtime, faux } = await session({ catalog });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { category: "desk", brand: "IKEA" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("One desk."),
+		(input) => {
+			expect(input.tools?.map((t) => t.name)).toContain("list_catalog_brands");
+			return fauxAssistantMessage(fauxToolCall("list_catalog_brands", {}), { stopReason: "toolUse" });
+		},
+		(input) => {
+			const listing = input.messages.findLast(
+				(m) => m.role === "toolResult" && m.toolName === "list_catalog_brands",
+			);
+			expect(listing).toMatchObject({ isError: false });
+			if (listing?.role !== "toolResult" || listing.content[0]?.type !== "text") throw new Error("Missing listing");
+			expect(JSON.parse(listing.content[0].text)).toMatchObject({
+				kind: "catalog_brands",
+				brands: [
+					{ brand: "article", source: "Article", productCount: 1 },
+					{ brand: "ikea", source: "IKEA", productCount: 1 },
+				],
+				pagination: { exhausted: true },
+			});
+			return fauxAssistantMessage("Article and IKEA are listed.");
+		},
+	]);
+	await runtime.controller.prompt({ message: "Show IKEA desks" }, context);
+	await runtime.lane.waitForIdle(context);
+	const before = await loadRecommendationHistory(runtime.studio.session, context);
+	await runtime.controller.prompt({ message: "Which brands do you have?" }, context);
+	await runtime.lane.waitForIdle(context);
+	expect(await loadRecommendationHistory(runtime.studio.session, context)).toEqual(before);
+	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+	const listing = entries.find(
+		(e) => e.type === "message" && e.message.role === "toolResult" && e.message.toolName === "list_catalog_brands",
+	);
+	expect(listing).toMatchObject({ message: { details: { kind: "catalog_brands", brands: expect.any(Array) } } });
+	expect(await runtime.studio.journal.records()).toEqual([]);
+});
+
+it("brand listing propagates unavailable, query errors and cancellation instead of inventing empty inventory", async () => {
+	const tool = createStudioTools().find((t) => t.name === "list_catalog_brands")!;
+	const { runtime } = await session();
+	await expect(
+		tool.execute("call", {}, () => {}, { studio: runtime.studio, planning: undefined }, invocation, context),
+	).rejects.toMatchObject({ code: "catalog_unavailable" });
+	for (const error of [
+		new Error("private backend message"),
+		Object.assign(new Error("aborted"), { name: "AbortError" }),
+	]) {
+		const catalog = {
+			...createMemoryCatalogAccess([]),
+			listBrands: async () => {
+				throw error;
+			},
+		};
+		await expect(
+			tool.execute(
+				"call",
+				{},
+				() => {},
+				{ studio: runtime.studio, planning: undefined, catalog },
+				invocation,
+				context,
+			),
+		).rejects.toMatchObject({ code: error.name === "AbortError" ? "cancelled" : "query_failed" });
 	}
 });

@@ -1,6 +1,9 @@
 // Browser-safe service definitions. Runtime and provider implementations live in the root export.
 export type {
 	CatalogAccess,
+	CatalogBrand,
+	CatalogBrandListRequest,
+	CatalogBrandListResult,
 	CatalogDetailResult,
 	CatalogDiagnostic,
 	CatalogDimensionName,

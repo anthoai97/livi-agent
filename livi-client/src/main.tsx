@@ -22,6 +22,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Markdown from "react-markdown";
+import { hideInternalIds } from "./message-markdown";
 import { createWebSocketTransport } from "./transport";
 import "./style.css";
 
@@ -440,7 +441,9 @@ function App() {
 						return (
 							<article key={item.id} className={`message ${item.role}`}>
 								<h2>{item.role === "user" ? "You" : "Livi"}</h2>
-								<Markdown skipHtml>{item.text}</Markdown>
+								<Markdown skipHtml rehypePlugins={item.role === "assistant" ? [hideInternalIds] : []}>
+									{item.text}
+								</Markdown>
 								{item.details ? (
 									<CatalogCards details={item.details} completed={item.completed} {...catalogSelection} />
 								) : null}
@@ -583,14 +586,22 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 		if (entry.type !== "message") continue;
 		if (
 			entry.message.role === "toolResult" &&
-			(entry.message.toolName === "add_object" || entry.message.toolName === "duplicate_object")
+			(entry.message.toolName === "add_object" ||
+				entry.message.toolName === "duplicate_object" ||
+				entry.message.toolName === "batch_room_edits")
 		) {
 			const text = messageText(entry.message);
 			if (text) items.push({ id: entry.id, kind: "status", text });
 		}
 		if (
 			entry.message.role === "toolResult" &&
-			entry.message.toolName === "replace_object" &&
+			(entry.message.toolName === "replace_object" ||
+				(entry.message.toolName === "batch_room_edits" &&
+					entry.message.details &&
+					typeof entry.message.details === "object" &&
+					"actions" in entry.message.details &&
+					Array.isArray(entry.message.details.actions) &&
+					entry.message.details.actions.includes("replace"))) &&
 			!entry.message.isError
 		) {
 			const details = entry.message.details;
@@ -704,7 +715,7 @@ function CatalogCards({
 							? () =>
 									onAdd(
 										{ type: "add_asset", selectedProductId: product.catalogId, quantity },
-										`Add ${quantity} ${sanitizeCatalogProduct(product).name} to the room.`,
+										`Add ${quantity} ${product.name} to the room.`,
 									)
 							: undefined
 					}
@@ -720,7 +731,7 @@ function CatalogCards({
 											expectedRevision: target.revision,
 											expectedCatalogId: target.catalogId,
 										},
-										`Replace the ${target.category} with ${sanitizeCatalogProduct(product).name}.`,
+										`Replace the ${target.category.replaceAll("_", " ")} with ${product.name}.`,
 									)
 							: undefined
 					}
@@ -759,9 +770,10 @@ function CatalogCard({
 				<h3>{product.name}</h3>
 				{product.description ? <p className="catalog-card-copy">{product.description}</p> : null}
 				{dimensions ? <p className="catalog-card-meta">{dimensions}</p> : null}
-				{product.description || reason ? (
+				{product.source || product.description || reason ? (
 					<details className="catalog-card-details">
 						<summary>Product details</summary>
+						{product.source ? <p>Brand/store: {product.source}</p> : null}
 						{product.description ? <p>{product.description}</p> : null}
 						{reason ? <p>{reason}</p> : null}
 					</details>

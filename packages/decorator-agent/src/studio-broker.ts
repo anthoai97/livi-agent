@@ -158,6 +158,21 @@ export class StudioBroker {
 					this.deliveries.add(work);
 					try {
 						await work;
+					} catch (error) {
+						if (
+							pending.request.type === "execute" &&
+							response.type === "result" &&
+							response.result.status === "saved"
+						) {
+							this.finish(
+								response.requestId,
+								new StudioBrokerError(
+									"outcome_unknown",
+									"Studio reported a save, but its result could not be validated",
+								),
+							);
+						}
+						throw error;
 					} finally {
 						this.deliveries.delete(work);
 					}
@@ -201,9 +216,43 @@ export class StudioBroker {
 				throw new StudioBrokerError("wrong_binding", "Result command does not match the request");
 			if (response.result.status === "saved" && response.result.snapshot.designId !== connection.binding.designId)
 				throw new StudioBrokerError("wrong_binding", "Saved result belongs to another design");
-			if (response.context) this.applyContext(connection, response.context);
+			if (response.result.status === "saved") {
+				const edits =
+					pending.request.command.action.type === "batch"
+						? pending.request.command.action.edits
+						: [pending.request.command];
+				const results = response.result.kind === "batch" ? response.result.results : [response.result];
+				if (
+					(pending.request.command.action.type === "batch") !== (response.result.kind === "batch") ||
+					!Array.isArray(results) ||
+					results.length !== edits.length ||
+					results.some((result, index) => {
+						const action = edits[index]!.action;
+						if (action.type === "add" || action.type === "duplicate") {
+							return (
+								result.kind !== "create" ||
+								!Array.isArray(result.created) ||
+								result.created.length !== action.quantity
+							);
+						}
+						return (
+							result.kind !== "edit" ||
+							!result.before ||
+							(action.type === "remove" ? result.after !== null : !result.after)
+						);
+					})
+				)
+					throw new StudioBrokerError(
+						"invalid_arguments",
+						"Saved outcomes do not match the ordered command edits",
+					);
+				validateStudioSnapshot(response.result.snapshot);
+				if (response.result.revision !== response.result.snapshot.revision)
+					throw new StudioBrokerError("invalid_arguments", "Saved revision does not match snapshot");
+			}
 		} else if (response.type !== "error") throw new StudioBrokerError("invalid_arguments", "Invalid response");
 		this.finish(response.requestId, response);
+		if (response.type === "result" && response.context) this.applyContext(connection, response.context);
 	}
 	private finish(id: string, result: StudioResponse | Error): void {
 		const pending = this.pending.get(id);

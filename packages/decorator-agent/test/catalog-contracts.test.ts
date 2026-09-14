@@ -49,6 +49,7 @@ it("ranks natural language and labels retailer options separately from actual co
 		color: "Ash",
 		availableColors: ["Yellow"],
 		imageUrl: null,
+		source: null,
 		imageRef: null,
 		productUrl: null,
 		dimensions: null,
@@ -72,6 +73,7 @@ it("ranks natural language and labels retailer options separately from actual co
 it("renders saved public S3 image references without signing and preserves literal plus keys", () => {
 	const saved = {
 		imageUrl: null,
+		source: null,
 		imageRef: "s3://livinit-storage-prod/asset_image/sofa+24/image 1.jpg",
 		productUrl: null,
 	} as CatalogProduct;
@@ -81,4 +83,115 @@ it("renders saved public S3 image references without signing and preserves liter
 	);
 	expect(product.imageRef).toBe(saved.imageRef);
 	expect(sanitizeCatalogProduct({ ...saved, imageRef: "s3://private-bucket/image.jpg" }).imageUrl).toBeNull();
+});
+
+it("matches complete brand/store names with whitespace and case normalization alongside every hard filter", async () => {
+	const base: CatalogProduct = {
+		catalogId: "match",
+		name: "Sofa",
+		source: " IKEA ",
+		category: "sofa",
+		color: "blue",
+		price: { amountMinor: 40000, currency: "USD" },
+		dimensions: { width: 2, depth: 1, height: 0.8, unit: "m" },
+		imageUrl: null,
+		imageRef: null,
+		productUrl: null,
+		style: null,
+		materials: null,
+		shape: null,
+		availableColors: null,
+		description: null,
+		reasons: [],
+	};
+	const catalog = createMemoryCatalogAccess([
+		base,
+		...[
+			null,
+			"IKEA outlet",
+			"Article",
+			"Modway",
+			"Modway Furniture",
+			"  ACME\t\n\u00a0 Store\uFEFF ",
+			"%_' OR true --",
+		].map((source, i) => ({ ...base, catalogId: `source-${i}`, source })),
+		{ ...base, catalogId: "wrong-category", category: "desk" },
+		{ ...base, catalogId: "wrong-color", color: "red" },
+		{ ...base, catalogId: "too-wide", dimensions: { ...base.dimensions!, width: 3 } },
+		{ ...base, catalogId: "too-expensive", price: { amountMinor: 60000, currency: "USD" } },
+	]);
+	const result = await catalog.search({
+		brand: "\tikeA\n",
+		category: "sofa",
+		color: "blue",
+		maxWidth: 2,
+		maxPrice: { amountMinor: 50000, currency: "USD" },
+	});
+	expect(result.products.map((p) => p.catalogId)).toEqual(["match"]);
+	expect(result.products[0]?.source).toBe(" IKEA ");
+	expect(requestFromConstraints(JSON.parse(JSON.stringify(result.resolvedConstraints))).brand).toBe("ikea");
+	for (const [brand, id] of [
+		["modway", "source-3"],
+		["Modway Furniture", "source-4"],
+		["acme  store", "source-5"],
+		["%_' OR true --", "source-6"],
+	]) {
+		expect((await catalog.search({ brand })).products.map((p) => p.catalogId)).toEqual([id]);
+	}
+	expect((await catalog.search({ brand: "unknown" })).products).toEqual([]);
+	expect(() => normalizeCatalogSearchRequest({ brand: " \t " })).toThrow(/non-empty/);
+});
+
+it("lists distinct actual source names, counts normalized groups, and traverses more than twenty brands", async () => {
+	const base: CatalogProduct = {
+		catalogId: "p",
+		name: "Product",
+		source: null,
+		imageUrl: null,
+		imageRef: null,
+		productUrl: null,
+		dimensions: null,
+		price: null,
+		category: null,
+		style: null,
+		color: null,
+		materials: null,
+		shape: null,
+		availableColors: null,
+		description: null,
+		reasons: [],
+	};
+	const sources = [
+		null,
+		"",
+		" \t ",
+		"IKEA",
+		" ikea\t",
+		"ACME\n\u00a0Store",
+		"acme store",
+		"Modway",
+		"Modway Furniture",
+		...Array.from({ length: 23 }, (_, i) => `Store ${String(i).padStart(2, "0")}`),
+	];
+	const catalog = createMemoryCatalogAccess(sources.map((source, i) => ({ ...base, catalogId: String(i), source })));
+	const first = await catalog.listBrands();
+	expect(first.kind).toBe("catalog_brands");
+	expect(first.brands).toHaveLength(20);
+	expect(first.pagination).toEqual({ limit: 20, offset: 0, nextOffset: 20, exhausted: false });
+	const last = await catalog.listBrands({ offset: first.pagination.nextOffset });
+	expect(last.pagination.exhausted).toBe(true);
+	const brands = [...first.brands, ...last.brands];
+	expect(brands).toHaveLength(27);
+	expect(new Set(brands.map((b) => b.brand)).size).toBe(27);
+	expect(brands.find((b) => b.brand === "ikea")).toMatchObject({ productCount: 2 });
+	expect(brands.find((b) => b.brand === "acme store")).toMatchObject({ productCount: 2 });
+	for (const brand of brands) {
+		expect(sources).toContain(brand.source);
+		expect((await catalog.search({ brand: brand.brand })).products.length).toBe(brand.productCount);
+	}
+	expect((await createMemoryCatalogAccess([]).listBrands()).brands).toEqual([]);
+	await expect(catalog.listBrands({ limit: 21 })).rejects.toThrow(/limit/);
+	const controller = new AbortController();
+	controller.abort();
+	await expect(catalog.listBrands({}, controller.signal)).rejects.toThrow();
 });

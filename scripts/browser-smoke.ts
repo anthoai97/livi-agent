@@ -15,6 +15,7 @@ function catalogProduct(catalogId: string, fields: Partial<CatalogProduct> & { n
 		catalogId,
 		imageUrl: null,
 		productUrl: null,
+		source: null,
 		imageRef: null,
 		dimensions: null,
 		price: null,

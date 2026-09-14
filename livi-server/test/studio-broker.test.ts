@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BACKGROUND_CONTEXT as context, withCancel } from "@earendil-works/chord/context";
 import { StudioBroker } from "@livi/decorator-agent";
-import type { StudioCommand, StudioCommandResult, StudioSnapshot } from "@livi/decorator-agent/contracts";
+import {
+	STUDIO_CONTRACT_VERSION,
+	type StudioCommand,
+	type StudioCommandResult,
+	type StudioSnapshot,
+} from "@livi/decorator-agent/contracts";
 
 const snapshot: StudioSnapshot = {
 	designId: "design-a",
@@ -35,7 +40,7 @@ const snapshot: StudioSnapshot = {
 async function adapter(broker: StudioBroker, tabId = "tab-a", designId = "design-a") {
 	const attachment = broker.attach();
 	const { generation } = await attachment.service.register(
-		{ tabId, designId, label: tabId, contractVersion: 3 },
+		{ tabId, designId, label: tabId, contractVersion: STUDIO_CONTRACT_VERSION },
 		context,
 	);
 	await attachment.service.ready(generation, context);
@@ -67,6 +72,90 @@ function saved(): StudioCommandResult {
 		before,
 		after,
 	};
+}
+
+for (const defect of ["outcome-count", "created-count", "remove-after", "revision"] as const) {
+	test(`invalid saved ${defect} settles as unknown and clears the mailbox without waiting for timeout`, async (t) => {
+		const broker = new StudioBroker({ timeoutMs: 60_000 });
+		t.after(() => broker.close());
+		const a = await adapter(broker);
+		const { commandId, conversationId, binding, expectedRevision } = command();
+		const batch: StudioCommand = {
+			commandId,
+			conversationId,
+			binding,
+			expectedRevision,
+			action: {
+				type: "batch",
+				edits: [
+					{ action: { type: "add", catalogId: "lamp", quantity: 2 } },
+					{ objectId: "chair-instance", action: { type: "remove" } },
+				],
+			},
+		};
+		const pending = assert.rejects(broker.execute(batch, context), {
+			code: "outcome_unknown",
+			message: "Studio reported a save, but its result could not be validated",
+		});
+		const request = a.service.mailbox.value!.requests[0]!;
+		const before = snapshot.objects[0]!;
+		const result: StudioCommandResult = {
+			commandId: batch.commandId,
+			status: "saved",
+			kind: "batch",
+			revision: defect === "revision" ? "wrong-revision" : snapshot.revision,
+			snapshot,
+			results: [
+				{
+					kind: "create",
+					created: Array.from({ length: defect === "created-count" ? 1 : 2 }, (_, index) => ({
+						objectId: `lamp-${index}`,
+						transform: before,
+					})),
+				},
+				...(defect === "outcome-count"
+					? []
+					: [{ kind: "edit" as const, before, after: defect === "remove-after" ? before : null }]),
+			],
+		};
+		await assert.rejects(
+			a.service.respond({ requestId: request.requestId, generation: a.generation, type: "result", result }, context),
+		);
+		assert.deepEqual(a.service.mailbox.value!.requests, []);
+		await pending;
+	});
+}
+
+for (const status of ["saved", "rejected", "unknown"] as const) {
+	test(`valid ${status} outcome survives a malformed piggybacked context`, async (t) => {
+		const broker = new StudioBroker({ timeoutMs: 60_000 });
+		t.after(() => broker.close());
+		const a = await adapter(broker);
+		const pending = broker.execute(command(), context);
+		const request = a.service.mailbox.value!.requests[0]!;
+		const result: StudioCommandResult =
+			status === "saved"
+				? saved()
+				: status === "rejected"
+					? { commandId: "command-a", status, error: { code: "stale_revision", message: "Room changed" } }
+					: { commandId: "command-a", status, message: "Save outcome unavailable" };
+		await assert.rejects(
+			a.service.respond(
+				{
+					requestId: request.requestId,
+					generation: a.generation,
+					type: "result",
+					result,
+					context: { generation: a.generation, sequence: 1, snapshot: { ...snapshot, designId: "wrong-design" } },
+				},
+				context,
+			),
+			/another registration or design/,
+		);
+		assert.deepEqual(a.service.mailbox.value!.requests, []);
+		assert.deepEqual(await pending, result);
+		assert.equal(broker.getState(a.binding).snapshot?.revision, snapshot.revision);
+	});
 }
 
 test("private mailboxes preserve generation authority and newer Studio context", async (t) => {
@@ -180,7 +269,7 @@ test("selection before the first snapshot stays ready and only an explicit read 
 	const connection = broker.attach();
 	const binding = { tabId: "tab-a", designId: "design-a" };
 	const { generation } = await connection.service.register(
-		{ ...binding, label: "Studio", contractVersion: 3 },
+		{ ...binding, label: "Studio", contractVersion: STUDIO_CONTRACT_VERSION },
 		context,
 	);
 	await connection.service.ready(generation, context);

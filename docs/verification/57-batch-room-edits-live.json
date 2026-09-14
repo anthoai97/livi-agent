@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "mockedBackend": false,
+  "browserTest": false,
+  "backend": "http://127.0.0.1:8080",
+  "designId": "b01a0c1c-b324-4789-9abd-29e6f87d4bc3",
+  "sourceUnchanged": true,
+  "startingRevision": 43,
+  "finalRevision": 49,
+  "removed": [
+    "tv_8",
+    "rug_7",
+    "shelf_13",
+    "sofa_274",
+    "ottoman_88",
+    "tv_stand_7"
+  ],
+  "remaining": [
+    "cabinet_240",
+    "floor_lamps_15",
+    "side_table_491",
+    "lounge_chair_315",
+    "coffee_table_1504",
+    "storage_organizer_15"
+  ],
+  "appendCount": 1,
+  "adoptCount": 1,
+  "duplicateDeliveryAppends": 0,
+  "invalidTargetRejectedBeforeAppend": true,
+  "staleRevisionRejectedBeforeAppend": true,
+  "reloadMatchesAcknowledgedState": true,
+  "createdFixtureRetained": true
+}

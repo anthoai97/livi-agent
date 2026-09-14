@@ -15,6 +15,7 @@ import {
 	AgentController,
 	SessionDirectory,
 	SessionManagement,
+	STUDIO_CONTRACT_VERSION,
 	type StudioCommand,
 	type StudioCommandResult,
 	StudioConnection,
@@ -430,7 +431,7 @@ test(
 		const directory = remote.use(StudioDirectory);
 		await remote.ready(context);
 		const { generation } = await studio.register(
-			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: 3 },
+			{ ...evidence.command.binding, label: "Restarted fake Studio", contractVersion: STUDIO_CONTRACT_VERSION },
 			context,
 		);
 		await studio.ready(generation, context);

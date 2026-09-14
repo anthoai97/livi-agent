@@ -23,6 +23,7 @@ function product(catalogId: string): CatalogProduct {
 		description: longText,
 		imageUrl: `https://example.com/${longText}`,
 		productUrl: `https://example.com/${longText}`,
+		source: longText,
 		imageRef: `s3://bucket/${longText}`,
 		price: { amountMinor: 12345, currency: "USD" },
 		dimensions: { width: 1.25, height: null, depth: 0.75, unit: "m" },
@@ -43,6 +44,7 @@ function recommendations(products: CatalogProduct[]): CatalogRecommendationDetai
 		products,
 		resolvedConstraints: {
 			query: longText,
+			brand: longText,
 			excludeIds: Array.from({ length: 500 }, (_, index) => `${index}-${longText}`),
 		},
 		pagination: { limit: 20, offset: 0, nextOffset: 20, exhausted: false },
@@ -116,7 +118,7 @@ it("bounds Unicode catalog cards while retaining complete exact references and u
 	expect(parsed).toMatchObject({
 		searchId: payload.searchId,
 		pagination: payload.pagination,
-		resolvedConstraints: { excludedCount: 500 },
+		resolvedConstraints: { excludedCount: 500, brand: expect.stringContaining("[truncated]") },
 		shownCount: 500,
 	});
 	for (const [index, record] of parsed.products.entries()) {
@@ -145,6 +147,7 @@ it("bounds product details without truncating IDs or verified numeric facts", ()
 		dimensions: source.dimensions,
 	});
 	expect(parsed.products[0]?.description?.length).toBeLessThan(source.description?.length ?? 0);
+	expect(parsed.products[0]?.source?.length).toBeLessThan(source.source!.length);
 	expect(source).toEqual(original);
 });
 
@@ -262,4 +265,31 @@ it("publishes full product details to the UI while feeding bounded text to the m
 		await runtime.close();
 		await repo.close(context);
 	}
+});
+
+it("bounds listing pages without truncating searchable brand names and preserves a continuation for omitted labels", () => {
+	const brands = Array.from({ length: 20 }, (_, i) => ({
+		brand: `${i}-${"brand".repeat(40)}`,
+		source: `${i}-${"Brand".repeat(40)}`,
+		productCount: 1,
+	}));
+	const payload = {
+		kind: "catalog_brands" as const,
+		brands,
+		pagination: { limit: 20, offset: 20, nextOffset: 40, exhausted: false },
+	};
+	const encoded = catalogModelContext(payload, 2000);
+	const result = JSON.parse(encoded) as {
+		brands: typeof brands;
+		omitted: number;
+		nextOffset: number;
+		pagination: typeof payload.pagination;
+	};
+	expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(2000);
+	expect(result.brands.length).toBeGreaterThan(0);
+	expect(result.omitted).toBeGreaterThan(0);
+	expect(result.brands).toEqual(brands.slice(0, result.brands.length));
+	expect(result.nextOffset).toBe(20 + result.brands.length);
+	expect(result.pagination).toEqual(payload.pagination);
+	expect(payload.brands).toHaveLength(20);
 });

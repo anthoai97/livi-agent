@@ -28,6 +28,8 @@ function registryRow(overrides: Partial<DesignAssetRegistryRow> = {}): DesignAss
 	return {
 		asset_id: "11111111-1111-4111-8111-111111111111",
 		name: "Zeroed sofa",
+		catalog_name: null,
+		source: null,
 		category: "sofa",
 		description: null,
 		asset_description: "fallback copy",
@@ -52,6 +54,7 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 		name: "Zeroed sofa",
 		imageUrl: null,
 		productUrl: "https://shop.example/sofa",
+		source: null,
 		imageRef: "s3://bucket/sofa.png",
 		dimensions: null,
 		price: null,
@@ -96,6 +99,16 @@ test("mapRegistryRow treats missing price and dimensions as unknown and keeps no
 	] as const) {
 		const mapped = mapRegistryRow(registryRow({ asset_id: "sofa", name: "Sofa", price: raw }));
 		assert.deepEqual(mapped?.price, expected === null ? null : { amountMinor: expected, currency: "USD" });
+	}
+});
+
+test("mapRegistryRow prefers the catalog display name and falls back when it is blank", () => {
+	for (const [catalog_name, expected] of [
+		[" Bohemian Wool Rug ", "Bohemian Wool Rug"],
+		[null, "rug_13"],
+		["   ", "rug_13"],
+	] as const) {
+		assert.equal(mapRegistryRow(registryRow({ name: "rug_13", catalog_name }))?.name, expected);
 	}
 });
 
@@ -228,10 +241,57 @@ test(
 		t.after(() => readPool.end());
 		const access = createPostgresCatalogAccess(readPool, { models });
 		const detail = await access.getProduct("11111111-1111-4111-8111-111111111111");
+		assert.equal(detail.source, "  IKEA\t\n\u00a0 Store\uFEFF ");
 		assert.equal(detail.name, "Haven Yellow Sectional Sofa");
 		assert.equal(detail.imageUrl, null);
 		assert.equal(detail.imageRef, "s3://bucket/haven.png");
 		assert.equal(detail.price, null);
+		for (const [brand, count] of [
+			[" IKEA  store ", 1],
+			["IKEA", 0],
+			["unknown", 0],
+			["%_' OR true --", 0],
+		] as const) {
+			const compiled = searchSql(
+				normalizeCatalogSearchRequest({ brand, category: "sectional", color: "yellow", maxWidth: 3 }),
+				{ embedding: [1] },
+			);
+			const predicate = compiled.text.slice(
+				compiled.text.lastIndexOf("\nWHERE ") + 7,
+				compiled.text.indexOf("\nORDER BY"),
+			);
+			const result = await readPool.query(
+				`SELECT asset_id FROM pipeline.design_asset_registry r WHERE ${predicate}`,
+				compiled.values.slice(0, -3),
+			);
+			assert.equal(result.rows.length, count);
+		}
+		// Run the generated source predicate against adversarial labels, not a filtering mock.
+		const labels = [null, "", "IKEA", "IKEA outlet", "Modway", "Modway Furniture", "%_' OR true --"];
+		const spaces =
+			"\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+		labels.push(`${spaces}ACME${spaces}Store${spaces}`);
+		for (const [brand, expected] of [
+			["ikea", "IKEA"],
+			["Modway", "Modway"],
+			["modway furniture", "Modway Furniture"],
+			["%_' OR true --", "%_' OR true --"],
+			["acme store", labels.at(-1)],
+		] as const) {
+			const compiled = searchSql(normalizeCatalogSearchRequest({ brand }), { embedding: [1] });
+			const predicate = compiled.text.slice(
+				compiled.text.lastIndexOf("\nWHERE ") + 7,
+				compiled.text.indexOf("\nORDER BY"),
+			);
+			const result = await readPool.query<{ source: string }>(
+				`SELECT source FROM unnest($2::text[]) AS r(source) CROSS JOIN (SELECT false AS is_decor_item, false AS is_deleted) flags WHERE ${predicate}`,
+				[compiled.values[0], labels],
+			);
+			assert.deepEqual(
+				result.rows.map((row) => row.source),
+				[expected],
+			);
+		}
 		const priced = await access.getProduct("33333333-3333-4333-8333-333333333333");
 		assert.deepEqual(priced.price, { amountMinor: 120000, currency: "USD" });
 		assert.equal(priced.imageUrl, "https://cdn.example/bend.jpg");
@@ -355,6 +415,8 @@ async function setupRegistry(adminUrl: string): Promise<void> {
 CREATE TABLE pipeline.pipeline_assets (
   asset_id uuid PRIMARY KEY,
   name text,
+  catalog_name text,
+  source text,
   category text,
   description text,
   asset_description text,
@@ -377,12 +439,12 @@ CREATE TABLE pipeline.pipeline_assets (
 		await pool.query(`
 CREATE VIEW pipeline.design_asset_registry
 ${invoker}AS
-SELECT asset_id, NULL::text AS legacy_uid, name, category, description, asset_description, color, style, shape, materials,
+SELECT asset_id, NULL::text AS legacy_uid, name, source, category, description, asset_description, color, style, shape, materials,
        price, width, depth, height, image_url, product_url, available_colors, is_deleted, false AS is_decor_item,
        false AS model_missing, 'assets'::text AS registry_source, NOW() AS inserted_at
 FROM pipeline.pipeline_assets
 UNION ALL
-SELECT asset_id, NULL::text, name, category, description, asset_description, color, style, shape, materials,
+SELECT asset_id, NULL::text, name, source, category, description, asset_description, color, style, shape, materials,
        price, width, depth, height, image_url, product_url, available_colors, is_deleted, true, false, 'decor', NOW()
 FROM pipeline.decor_items`);
 		await pool.query(
@@ -408,10 +470,17 @@ VALUES
 VALUES ($1, 'Yellow plant', 'sectional', 'yellow', 0, NULL, NULL, false)`,
 			["66666666-6666-4666-8666-666666666666"],
 		);
+		await pool.query("UPDATE pipeline.pipeline_assets SET catalog_name = name, name = 'sofa_1' WHERE asset_id = $1", [
+			"11111111-1111-4111-8111-111111111111",
+		]);
 		await pool.query(`INSERT INTO pipeline.pipeline_assets (asset_id, name, category, materials)
 SELECT ('00000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
 CASE WHEN n = 85 THEN 'Velvet desk' ELSE 'A desk ' || n END, 'desk', CASE WHEN n = 85 THEN 'velvet' ELSE 'wood' END
 FROM generate_series(1,85) AS n`);
+		await pool.query("UPDATE pipeline.pipeline_assets SET source = $1 WHERE asset_id = $2", [
+			"  IKEA\t\n\u00a0 Store\uFEFF ",
+			"11111111-1111-4111-8111-111111111111",
+		]);
 		await pool.query("GRANT CONNECT ON DATABASE postgres TO livi_catalog_read");
 		await pool.query("GRANT USAGE ON SCHEMA pipeline TO livi_catalog_read");
 		await pool.query(
@@ -468,6 +537,7 @@ test(
 			room: { categories: ["sofa"] },
 		});
 		assert.equal(calls, 1);
+		assert.equal(scoped.products[0]?.name, "Haven Yellow Sectional Sofa");
 		assert.equal(scoped.retrieval?.strategy, "vector");
 		assert.deepEqual(
 			scoped.products.map((p) => p.catalogId),
@@ -514,3 +584,103 @@ test("broad search model errors never become an empty successful search", async 
 		await pool.end();
 	}
 });
+
+test("brand predicate is literal and precedes vector ranking and limit with other filters", () => {
+	const brand = "%_' OR true --";
+	const compiled = searchSql(
+		normalizeCatalogSearchRequest({
+			brand,
+			category: "sofa",
+			color: "blue",
+			maxWidth: 2,
+			maxPrice: { amountMinor: 50000, currency: "USD" },
+			limit: 1,
+		}),
+		{ embedding: [1] },
+	);
+	assert.ok(compiled.values.includes(brand.toLowerCase()));
+	assert.ok(!compiled.text.includes(brand));
+	const where = compiled.text.slice(compiled.text.lastIndexOf("\nWHERE "), compiled.text.indexOf("\nORDER BY"));
+	assert.match(where, /regexp_replace\(source,/);
+	assert.match(where, /\) = \$2/);
+	assert.doesNotMatch(where, /LIKE|ILIKE/);
+	assert.match(where, /category IS NOT NULL/);
+	assert.match(where, /color IS NOT NULL/);
+	assert.match(where, /width <= \$/);
+	assert.match(where, /round\(price::numeric \* 100\) <= \$/);
+	assert.ok(compiled.text.indexOf("\nORDER BY") < compiled.text.indexOf("\nLIMIT"));
+});
+
+test(
+	"lists only distinct searchable brands from active indexed inventory without pgvector or an embedding call",
+	{ timeout: 60000 },
+	async (t) => {
+		const cluster = await startInitdbCluster();
+		if (!cluster) return t.skip("No disposable PostgreSQL available");
+		const admin = new Pool({ connectionString: cluster.adminUrl });
+		const pool = createCatalogPool(parseCatalogDatabaseUrl(cluster.readUrl));
+		t.after(async () => {
+			await pool.end();
+			await admin.end();
+			await cluster.stop();
+		});
+		await setupRegistry(cluster.adminUrl);
+		// Listing only requires a nonnull embedding, so this isolated fixture needs no vector extension.
+		await admin.query("CREATE TABLE pipeline.asset_embeddings (asset_id uuid PRIMARY KEY, embedding text)");
+		const sources = [
+			"IKEA",
+			" ikea\t",
+			"ACME\n\u00a0Store",
+			"acme store",
+			"Modway",
+			"Modway Furniture",
+			...Array.from({ length: 23 }, (_, i) => `Store ${String(i).padStart(2, "0")}`),
+			null,
+			" \t\uFEFF ",
+			"Deleted",
+			"Unindexed",
+			"Null embedding",
+		];
+		for (const [index, source] of sources.entries()) {
+			const id = `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`;
+			await admin.query(
+				"INSERT INTO pipeline.pipeline_assets (asset_id, name, source, is_deleted) VALUES ($1, 'Product', $2, $3)",
+				[id, source, source === "Deleted"],
+			);
+			if (source !== "Unindexed")
+				await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, $2)", [
+					id,
+					source === "Null embedding" ? null : "indexed",
+				]);
+		}
+		const decorId = "bbbbbbbb-bbbb-4bbb-8bbb-000000000001";
+		await admin.query(
+			"INSERT INTO pipeline.decor_items (asset_id, name, source) VALUES ($1, 'Decor', 'Decor only')",
+			[decorId],
+		);
+		await admin.query("INSERT INTO pipeline.asset_embeddings VALUES ($1, 'indexed')", [decorId]);
+		await admin.query("GRANT SELECT ON pipeline.asset_embeddings TO livi_catalog_read");
+
+		const catalog = createPostgresCatalogAccess(pool);
+		const first = await catalog.listBrands();
+		assert.equal(first.kind, "catalog_brands");
+		assert.equal(first.brands.length, 20);
+		assert.equal(first.pagination.exhausted, false);
+		const last = await catalog.listBrands({ offset: first.pagination.nextOffset });
+		assert.equal(last.pagination.exhausted, true);
+		const brands = [...first.brands, ...last.brands];
+		assert.equal(brands.length, 27);
+		assert.equal(new Set(brands.map((b) => b.brand)).size, 27);
+		assert.equal(brands.find((b) => b.brand === "ikea")?.productCount, 2);
+		assert.equal(brands.find((b) => b.brand === "acme store")?.productCount, 2);
+		assert.ok(brands.some((b) => b.brand === "modway"));
+		assert.ok(brands.some((b) => b.brand === "modway furniture"));
+		assert.ok(brands.every((b) => sources.includes(b.source)));
+		assert.ok(!brands.some((b) => /deleted|unindexed|null embedding|decor only|ikea store/.test(b.brand)));
+		assert.deepEqual((await catalog.listBrands({ offset: 27 })).brands, []);
+		await assert.rejects(catalog.listBrands({ offset: -1 }), /invalid_arguments/);
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(catalog.listBrands({}, controller.signal));
+	},
+);
