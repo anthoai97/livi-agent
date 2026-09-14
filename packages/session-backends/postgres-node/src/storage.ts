@@ -21,7 +21,17 @@ import type {
 import { prepareStorageCommit, resolveListReadOptions, value } from "@earendil-works/pi-agent-core";
 import type { Pool, PoolClient } from "pg";
 import { appendEntryToBranchIndex, scanBranch } from "./branches.ts";
-import { decodeKey, encodeId, encodeKey, safeNumber, transaction } from "./database.ts";
+import { decodeKey, EMPTY_STATS, encodeId, encodeKey, safeNumber, transaction } from "./database.ts";
+
+const PROGRESS_FRAME_NAMESPACE = "pi.pending.assistant_frame";
+const PROGRESS_TOOL_NAMESPACE = "pi.pending.tool_output";
+
+function isProgressWrite(write: Write): boolean {
+	return (
+		(write.kind === "list" && write.op === "append" && write.namespace === PROGRESS_FRAME_NAMESPACE) ||
+		(write.kind === "value" && write.op === "set" && write.namespace === PROGRESS_TOOL_NAMESPACE)
+	);
+}
 
 interface PayloadRow {
 	payload: string;
@@ -182,6 +192,7 @@ export class PostgresStorage implements Storage {
 	private readonly operations = new Set<Promise<unknown>>();
 	private closed = false;
 	private closePromise: Promise<void> | undefined;
+	private stats: SessionStats | undefined;
 	private readonly pool: Pool;
 	private readonly options: { sessionId: string; now?: () => number };
 	constructor(pool: Pool, options: { sessionId: string; now?: () => number }) {
@@ -201,23 +212,30 @@ export class PostgresStorage implements Storage {
 		return result;
 	}
 	commit(writes: Write[], _context: Context): Promise<CommitResult> {
-		return this.admit(
-			() =>
-				transaction(this.pool, async (client) => {
-					const row = await readSession(client, this.options.sessionId, true);
-					const firstSeq = safeNumber(row.next_seq);
-					const nextSeq = safeNumber(firstSeq + writes.length);
-					const prepared = prepareStorageCommit(writes, firstSeq, safeNumber((this.options.now ?? Date.now)()));
-					const stats = statsFromRow(row);
-					await applyWrites(client, this.options.sessionId, prepared.writes, stats);
-					await client.query("UPDATE livi_sessions.sessions SET next_seq=$2 WHERE id=$1", [
-						this.options.sessionId,
-						nextSeq,
-					]);
-					return { ...prepared.result, stats };
-				}),
-			true,
-		);
+		return this.admit(async () => {
+			if (writes.length > 0 && writes.every(isProgressWrite)) {
+				return {
+					firstSeq: 0,
+					seqs: writes.map((_, index) => index),
+					timestamp: safeNumber((this.options.now ?? Date.now)()),
+					stats: this.stats ?? EMPTY_STATS,
+				};
+			}
+			return transaction(this.pool, async (client) => {
+				const row = await readSession(client, this.options.sessionId, true);
+				const firstSeq = safeNumber(row.next_seq);
+				const nextSeq = safeNumber(firstSeq + writes.length);
+				const prepared = prepareStorageCommit(writes, firstSeq, safeNumber((this.options.now ?? Date.now)()));
+				const stats = statsFromRow(row);
+				await applyWrites(client, this.options.sessionId, prepared.writes, stats);
+				await client.query("UPDATE livi_sessions.sessions SET next_seq=$2 WHERE id=$1", [
+					this.options.sessionId,
+					nextSeq,
+				]);
+				this.stats = stats;
+				return { ...prepared.result, stats };
+			});
+		}, true);
 	}
 	getEntries(ids: string[], _context: Context): Promise<Map<string, Entry>> {
 		return this.admit(async () => {
@@ -325,7 +343,11 @@ export class PostgresStorage implements Storage {
 		);
 	}
 	getStats(_context: Context): Promise<SessionStats> {
-		return this.admit(async () => statsFromRow(await readSession(this.pool, this.options.sessionId)));
+		return this.admit(async () => {
+			const stats = statsFromRow(await readSession(this.pool, this.options.sessionId));
+			this.stats = stats;
+			return stats;
+		});
 	}
 	snapshot(): Promise<ForkSourceSnapshot> {
 		return this.admit(

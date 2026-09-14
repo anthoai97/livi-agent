@@ -6,6 +6,8 @@
 
 Set `SESSION_DATABASE_URL` to store sessions in PostgreSQL under the `livi_sessions` schema. Without it, Livi uses SQLite. All sessions share the tables below.
 
+Streaming assistant frames and tool-progress snapshots are not written to PostgreSQL. Finished messages, operation state, and Studio values are. A crash mid-reply loses the in-flight draft; reconnect after a settled turn restores the conversation.
+
 ```text
 Local data directory (LIVI_DATA_DIR, default .data)
   server-id

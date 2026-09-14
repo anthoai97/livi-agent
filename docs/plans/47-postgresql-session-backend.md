@@ -1,6 +1,6 @@
 # PostgreSQL session storage
 
-**Status: implemented; local validation recorded below.** Persist agent sessions in PostgreSQL while retaining one active owner per session. Conversations, branches, durable operation state, and usage survive server restart without changing agent behavior.
+**Status: implemented.** Persist agent sessions in PostgreSQL while retaining one active owner per session. Settled conversations, branches, durable operation state, and usage survive server restart. Streaming progress may be lost.
 
 ## Scope and decisions
 
@@ -42,14 +42,45 @@ Use `gh stack` for dependent PRs: package/schema/storage with conformance → re
 - [node-postgres transactions](https://node-postgres.com/features/transactions): use one client for every statement in a transaction.
 - [PostgreSQL row locks](https://www.postgresql.org/docs/current/explicit-locking.html) and [snapshot isolation](https://www.postgresql.org/docs/current/transaction-iso.html): protect commit consistency and fork snapshots; they do not establish agent ownership.
 
-## Unresolved questions
-
-- None blocking. First version uses opt-in PostgreSQL, a fresh session store, and one active server per database/schema. Importing existing SQLite sessions and multi-server operation require separate plans.
-
-## Validation evidence
+## Validation evidence — database backend only
 
 - Real PostgreSQL: 50 storage/repository conformance and failure/concurrency tests passed.
 - Nine server acceptance tests passed: WebSocket persistence, graceful restart, killed-process durable-operation recovery, startup failures; SQLite paths retained.
 - SQLite suite: 105 passed. Full affected server suite: 30 passed, two opt-in cases skipped without their database URLs.
 - Explicit integration command and PostgreSQL CI service; backend/server typechecks included in `pnpm check`.
 - Delivery stack: storage → repository/forks → server/acceptance/docs.
+
+## Extension: skip remote streaming-progress writes
+
+**Status: implemented.** Remote PostgreSQL RTT makes per-frame commits too slow. Chat/progress durability is optional; settled history is not. Replaces the query-round-trip proposal.
+
+### Scope
+
+- `packages/session-backends/postgres-node` implementation/tests/docs and this plan only. No harness, server, client, SQLite, schema, or config flag.
+- Progress-only commits never open a PostgreSQL connection. Progress = `list` append to `pi.pending.assistant_frame`, or `value` set to `pi.pending.tool_output`. Any other write in the batch (entries, usage, deletes, other values, mixed settlement) uses a normal transaction and persists every write in that batch.
+- Do not allocate durable `next_seq` for skipped writes. Return a local `CommitResult` (cached stats, ephemeral seqs). Live tokens stay process-local; crash/reconnect mid-reply has no durable partial (existing empty-frame recovery).
+- Still await PostgreSQL COMMIT for settled user/assistant/tool entries, operation state, and Studio values. No write-behind, frame cache, batching timer, or silent SQLite fallback.
+
+### Implementation
+
+1. In [storage.ts](../../packages/session-backends/postgres-node/src/storage.ts) `commit()`, if the batch is non-empty and every write is progress-only, resolve on the existing storage queue without `transaction()`. Cache stats from durable commits/`getStats` for that result.
+2. Leave `applyWrites`, forks, deletes, and mixed settlement unchanged. A progress `deleteList`/`deleteValue` in a settlement transaction still runs.
+3. Document PostgreSQL as lossy for in-flight assistant/tool progress. One follow-up PR on the existing stack via `gh stack`.
+
+### Validation
+
+- Existing storage/repo conformance unchanged (generic lists still persist).
+- Progress-only append/set: zero PostgreSQL queries; `readList`/`getValue` empty; `next_seq` and stats unchanged.
+- Mixed settlement still inserts the response and deletes the progress address atomically.
+- Non-progress list appends, tool-result entries, and operation values still durable; rollback/connection-loss/drain tests unchanged.
+- `pnpm test:session:postgres`, `pnpm test:session`, `pnpm check`. No harness/server/client source diff.
+
+## Validation evidence — skip progress writes
+
+- Postgres-node: 52 tests passed, including progress-only skip (zero `pool.connect` while the session row is locked; `next_seq`/stats unchanged; reads empty) and mixed settlement (progress writes persist in mixed batches; settlement deletes the frame list).
+- `pnpm test:session:postgres`: backend suite plus 9 server acceptance tests passed. `pnpm test:session`: 105 SQLite tests passed. `pnpm check` passed.
+- No harness, server, or client source diff.
+
+## Unresolved questions
+
+- None. Query combining for remaining settled commits is a later optional follow-up.

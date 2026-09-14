@@ -1,7 +1,12 @@
 import {
+	appendList,
 	BACKGROUND_CONTEXT as context,
+	deleteList,
 	insertEntry,
 	insertUsage,
+	list,
+	pendingAssistantFrames,
+	pendingToolOutput,
 	setValue,
 	value,
 } from "@earendil-works/pi-agent-core";
@@ -123,4 +128,74 @@ it("surfaces real connection termination, rolls back and releases its client", a
 	killer.release();
 	expect(await storage.getValue(value("test"), context)).toBeUndefined();
 	expect((await storage.commit([], context)).firstSeq).toBe(1);
+});
+
+async function nextSeq(): Promise<string> {
+	const result = await pool.query<{ next_seq: string }>("SELECT next_seq FROM livi_sessions.sessions WHERE id=$1", [
+		encodeId("session"),
+	]);
+	return result.rows[0]!.next_seq;
+}
+
+it("skips PostgreSQL for progress-only commits", async () => {
+	const frames = pendingAssistantFrames("op", "resp");
+	const output = pendingToolOutput("op", "call");
+	const frame = { type: "text_delta" as const, contentIndex: 0, delta: "x" };
+	await storage.commit(
+		[
+			insertEntry({
+				id: "user",
+				parentId: null,
+				type: "message",
+				message: { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 },
+			}),
+		],
+		context,
+	);
+	const stats = await storage.getStats(context);
+	const seq = await nextSeq();
+	const connect = pool.connect.bind(pool);
+	let connects = 0;
+	pool.connect = ((...args: Parameters<typeof connect>) => {
+		connects++;
+		return connect(...args);
+	}) as typeof pool.connect;
+	const blocker = await pool.connect();
+	try {
+		await blocker.query("BEGIN");
+		await blocker.query("SELECT 1 FROM livi_sessions.sessions FOR UPDATE");
+		const before = connects;
+		const result = await storage.commit([appendList(frames, frame), appendList(frames, frame)], context);
+		await storage.commit([setValue(output, { content: [], details: null })], context);
+		expect(connects).toBe(before);
+		expect(result.stats).toEqual(stats);
+	} finally {
+		await blocker.query("ROLLBACK");
+		blocker.release();
+		pool.connect = connect;
+	}
+	expect(await nextSeq()).toBe(seq);
+	expect(await storage.readList(frames, undefined, context)).toEqual([]);
+	expect(await storage.getValue(output, context)).toBeUndefined();
+	expect(await storage.getStats(context)).toEqual(stats);
+});
+
+it("persists mixed progress writes and settlement deletes", async () => {
+	const frames = pendingAssistantFrames("op", "resp");
+	const kept = list<string>("app", "events");
+	const frame = { type: "text_delta" as const, contentIndex: 0, delta: "x" };
+	await storage.commit(
+		[appendList(frames, frame), appendList(kept, "kept"), setValue(value("test"), "kept")],
+		context,
+	);
+	expect((await storage.readList(frames, undefined, context)).map(({ value }) => value)).toEqual([frame]);
+	expect((await storage.readList(kept, undefined, context)).map(({ value }) => value)).toEqual(["kept"]);
+	expect((await storage.getValue(value("test"), context))?.value).toBe("kept");
+	await storage.commit(
+		[insertEntry({ id: "reply", parentId: null, type: "custom", customType: "response" }), deleteList(frames)],
+		context,
+	);
+	expect([...(await storage.getEntries(["reply"], context))].map(([id]) => id)).toEqual(["reply"]);
+	expect(await storage.readList(frames, undefined, context)).toEqual([]);
+	expect((await storage.readList(kept, undefined, context)).map(({ value }) => value)).toEqual(["kept"]);
 });

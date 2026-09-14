@@ -8,6 +8,8 @@ IDs use reversible UTF-16 encoding. Value addresses preserve code-point ordering
 
 Commits use one pooled connection and one transaction. Failed transactions roll back; a lost COMMIT acknowledgement rejects without replay, because the durable outcome may be unknown.
 
+Streaming progress is not durable: commits that only append `pi.pending.assistant_frame` or set `pi.pending.tool_output` do not open a PostgreSQL transaction. Crash or reconnect mid-reply has no stored partial. Settled entries, usage, operation state, and other values still wait for COMMIT. A mixed batch persists every write, including progress deletes.
+
 ## Tests
 
 Use only a disposable database: tests destroy its `livi_sessions` schema.
