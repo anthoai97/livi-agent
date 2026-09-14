@@ -770,9 +770,10 @@ function CatalogCard({
 				<h3>{product.name}</h3>
 				{product.description ? <p className="catalog-card-copy">{product.description}</p> : null}
 				{dimensions ? <p className="catalog-card-meta">{dimensions}</p> : null}
-				{product.description || reason ? (
+				{product.source || product.description || reason ? (
 					<details className="catalog-card-details">
 						<summary>Product details</summary>
+						{product.source ? <p>Brand/store: {product.source}</p> : null}
 						{product.description ? <p>{product.description}</p> : null}
 						{reason ? <p>{reason}</p> : null}
 					</details>

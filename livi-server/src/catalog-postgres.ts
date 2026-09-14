@@ -21,7 +21,7 @@ import { assertCatalogEmbedding, type CatalogModels } from "./catalog-models.js"
 const REGISTRY = "pipeline.design_asset_registry";
 // The registry view omits the product display name stored on pipeline_assets.
 const SELECT_COLUMNS =
-	"asset_id, name, (SELECT catalog_name FROM pipeline.pipeline_assets p WHERE p.asset_id = r.asset_id) AS catalog_name, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
+	"asset_id, name, (SELECT catalog_name FROM pipeline.pipeline_assets p WHERE p.asset_id = r.asset_id) AS catalog_name, source, category, description, asset_description, color, style, shape, materials, price, width, depth, height, image_url, product_url, available_colors";
 const ACTIVE_REGISTRY_ROW = ["COALESCE(is_decor_item, false) = false", "COALESCE(is_deleted, false) = false"] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -29,6 +29,7 @@ export interface DesignAssetRegistryRow {
 	asset_id: unknown;
 	name: unknown;
 	catalog_name: unknown;
+	source: unknown;
 	category: unknown;
 	description: unknown;
 	asset_description: unknown;
@@ -138,7 +139,9 @@ export function createPostgresCatalogAccess(
 			const query =
 				normalized.query ??
 				normalized.originalQuery ??
-				[normalized.color, normalized.style, normalized.material, normalized.category].filter(Boolean).join(" ");
+				[normalized.brand, normalized.color, normalized.style, normalized.material, normalized.category]
+					.filter(Boolean)
+					.join(" ");
 			if (!query.trim()) throw new CatalogError("invalid_arguments", "Provide a search query or product filters");
 			debug("catalog.search.start", {
 				strategy: "vector",
@@ -223,6 +226,7 @@ export function mapRegistryRow(row: DesignAssetRegistryRow): CatalogProduct | un
 	return sanitizeCatalogProduct({
 		catalogId,
 		name: asText(row.catalog_name) ?? asText(row.name) ?? "",
+		source: typeof row.source === "string" && row.source.trim() ? row.source : null,
 		imageUrl: httpUrl(row.image_url),
 		productUrl: httpUrl(row.product_url),
 		imageRef: catalogImageRef(row.image_url),
@@ -259,6 +263,12 @@ export function searchSql(
 		const param = add(request.categories);
 		where.push(
 			`category IS NOT NULL AND btrim(category) <> '' AND (regexp_replace(lower(btrim(category)), '[ -]+', '_', 'g') = ANY(${param}::text[]) OR regexp_replace(regexp_replace(lower(btrim(category)), '[ -]+', '_', 'g'), 's$', '') = ANY(${param}::text[]))`,
+		);
+	}
+	if (request.brand) {
+		// Match JavaScript \s exactly, including Unicode spaces, independent of the database locale.
+		where.push(
+			`lower(btrim(regexp_replace(source, U&'[\\0009-\\000D\\0020\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]+', ' ', 'g'))) = ${add(request.brand)}`,
 		);
 	}
 	if (request.color) {

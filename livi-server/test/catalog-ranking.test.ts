@@ -12,6 +12,7 @@ function row(id: number): DesignAssetRegistryRow {
 		asset_id: `Product-${id}`,
 		name: `Product ${id}`,
 		catalog_name: null,
+		source: "IKEA",
 		category: "sectional",
 		description: "A cozy sectional",
 		asset_description: null,
@@ -58,7 +59,10 @@ test("vector retrieval preserves database similarity order and requests only six
 			},
 		},
 	});
-	const first = await access.search({ query: "yellow sectional", category: "sectional" });
+	const first = await access.search({ query: "yellow sectional", brand: " IKEA ", category: "sectional" });
+	assert.equal(first.products[0]?.source, "IKEA");
+	assert.equal(first.resolvedConstraints.brand, "ikea");
+	assert.equal(sql[0]?.values.includes("ikea"), true);
 	assert.equal(queries, 1);
 	assert.equal(sql.length, 1);
 	assert.deepEqual(sql[0]?.values.slice(-2), [7, 0]);

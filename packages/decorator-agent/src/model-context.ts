@@ -48,6 +48,7 @@ function productContext(product: CatalogProduct, detailed: boolean) {
 	return {
 		catalogId: product.catalogId,
 		name: text(product.name),
+		source: text(product.source),
 		price: product.price,
 		dimensions: product.dimensions,
 		category: text(product.category),
@@ -67,7 +68,7 @@ export function catalogModelContext(
 ): string {
 	if ("product" in payload)
 		return modelRecords({ kind: "product_details" }, "products", [productContext(payload.product, true)], maxBytes);
-	const { originalQuery, query, category, color, style, material, excludeIds, target, ...constraints } =
+	const { originalQuery, query, category, brand, color, style, material, excludeIds, target, ...constraints } =
 		payload.resolvedConstraints;
 	const metadata: Record<string, unknown> = {
 		kind: payload.kind,
@@ -77,6 +78,7 @@ export function catalogModelContext(
 			originalQuery: text(originalQuery, 512),
 			query: text(query, 512),
 			category: category?.slice(0, 8).map((entry) => text(entry)),
+			brand: text(brand),
 			color: text(color),
 			style: text(style),
 			material: text(material),
@@ -88,7 +90,7 @@ export function catalogModelContext(
 		binding: payload.binding,
 		followUp: payload.followUp,
 		shownCount: payload.shownIds.length,
-		note: "Full cards and exclusions are saved. Use followUp to preserve filters; get_product_details retrieves one exact catalogId. Retailer color options do not verify the asset variant.",
+		note: "Full cards and exclusions are saved. Use followUp to preserve filters; get_product_details retrieves one exact catalogId. Source is a brand/store label, not a verified manufacturer. Retailer color options do not verify the asset variant.",
 	};
 	if (Buffer.byteLength(JSON.stringify(metadata)) > maxBytes / 2) {
 		metadata.resolvedConstraints = {

@@ -15,10 +15,14 @@ Needs `CATALOG_DATABASE_URL` (PostgreSQL `pipeline.design_asset_registry`). If u
 
 | Tool | What it does |
 | --- | --- |
-| `search_catalog` | Vector search of shoppable products; filters for category, color, style, material, size, USD price |
+| `search_catalog` | Vector search of shoppable products; filters for brand/store, category, color, style, material, size, USD price |
 | `get_product_details` | One product by catalog ID |
 
 Search purposes: discovery, recommendation, replacement. Follow-ups: show more, cheaper, smaller. Results render as cards. Similarity is not attribute-validated; prices are USD only.
+
+Brand/store filters use the registry `source` label: complete-name matching after trimming, collapsing whitespace, and ignoring case. Labels may identify brands or stores, not verified manufacturers. No substring matching or guessed aliases: Modway and Modway Furniture remain separate. Explicit “Show IKEA sofas” filters; “like IKEA” stays descriptive. More, cheaper, and smaller preserve the filter; “Try Article instead” starts a new search retaining other explicit constraints and the target. No matches asks which constraint to relax, without silently dropping brand. Cards and model context include the original source label.
+
+Data audit pending: Walmart labels paired with other domains and `*_DSFabricsCIS` source names need investigation. Brand products sold through a retailer are expected. No source data rewritten.
 
 ## Room edits (attached Studio required)
 

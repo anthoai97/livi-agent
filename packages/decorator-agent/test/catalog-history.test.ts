@@ -20,6 +20,7 @@ const desk: CatalogProduct = {
 	name: "Original desk",
 	imageUrl: null,
 	productUrl: null,
+	source: null,
 	imageRef: null,
 	dimensions: { width: 1.2, depth: 0.6, height: 0.75, unit: "m" },
 	price: { amountMinor: 40000, currency: "USD" },
@@ -38,7 +39,7 @@ function recommendations(searchId: string): CatalogRecommendationDetails {
 		kind: "catalog_recommendations",
 		searchId,
 		products: [desk],
-		resolvedConstraints: { category: ["desk"], excludeIds: ["blocked-product"] },
+		resolvedConstraints: { brand: "ikea", category: ["desk"], excludeIds: ["blocked-product"] },
 		pagination: { limit: 1, offset: 0, exhausted: false },
 		shownIds: [desk.catalogId],
 		binding: { designId: "original-room" },
@@ -104,6 +105,14 @@ it("preserves catalog series, exclusions and earlier comparison references acros
 	const continuation = mergeCatalogFollowUp(history[0]!, "show_more");
 	expect(continuation.request.omitIds).toEqual([desk.catalogId, "desk:next"]);
 	expect(continuation.request.excludeIds).toEqual(["blocked-product"]);
+	for (const followUp of ["show_more", "cheaper", "smaller"] as const)
+		expect(
+			mergeCatalogFollowUp(history[0]!, followUp, {
+				referenceCatalogId: desk.catalogId,
+				dimension: "width",
+				candidates: [desk],
+			}).request.brand,
+		).toBe("ikea");
 	expect(continuation.searchId).toBe("search:original");
 	const options = { referenceCatalogId: desk.catalogId, candidates: history.flatMap((entry) => entry.products) };
 	expect(mergeCatalogFollowUp(history[0]!, "cheaper", options).request.maxPrice).toEqual({

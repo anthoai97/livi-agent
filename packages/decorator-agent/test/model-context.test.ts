@@ -23,6 +23,7 @@ function product(catalogId: string): CatalogProduct {
 		description: longText,
 		imageUrl: `https://example.com/${longText}`,
 		productUrl: `https://example.com/${longText}`,
+		source: longText,
 		imageRef: `s3://bucket/${longText}`,
 		price: { amountMinor: 12345, currency: "USD" },
 		dimensions: { width: 1.25, height: null, depth: 0.75, unit: "m" },
@@ -43,6 +44,7 @@ function recommendations(products: CatalogProduct[]): CatalogRecommendationDetai
 		products,
 		resolvedConstraints: {
 			query: longText,
+			brand: longText,
 			excludeIds: Array.from({ length: 500 }, (_, index) => `${index}-${longText}`),
 		},
 		pagination: { limit: 20, offset: 0, nextOffset: 20, exhausted: false },
@@ -116,7 +118,7 @@ it("bounds Unicode catalog cards while retaining complete exact references and u
 	expect(parsed).toMatchObject({
 		searchId: payload.searchId,
 		pagination: payload.pagination,
-		resolvedConstraints: { excludedCount: 500 },
+		resolvedConstraints: { excludedCount: 500, brand: expect.stringContaining("[truncated]") },
 		shownCount: 500,
 	});
 	for (const [index, record] of parsed.products.entries()) {
@@ -145,6 +147,7 @@ it("bounds product details without truncating IDs or verified numeric facts", ()
 		dimensions: source.dimensions,
 	});
 	expect(parsed.products[0]?.description?.length).toBeLessThan(source.description?.length ?? 0);
+	expect(parsed.products[0]?.source?.length).toBeLessThan(source.source!.length);
 	expect(source).toEqual(original);
 });
 

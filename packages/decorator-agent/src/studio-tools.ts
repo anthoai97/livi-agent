@@ -12,6 +12,7 @@ import {
 	equivalentCategories,
 	isCatalogRecommendationDetails,
 	mergeCatalogFollowUp,
+	normalizeCatalogSearchRequest,
 	sanitizeCatalogProduct,
 	unavailableCatalogAccess,
 } from "./catalog.ts";
@@ -73,6 +74,7 @@ const catalogSearchSchema = Type.Object(
 		),
 		targetObjectId: Type.Optional(Type.String({ minLength: 1 })),
 		category: Type.Optional(Type.String({ minLength: 1 })),
+		brand: Type.Optional(Type.String({ minLength: 1 })),
 		color: Type.Optional(Type.String({ minLength: 1 })),
 		style: Type.Optional(Type.String({ minLength: 1 })),
 		material: Type.Optional(Type.String({ minLength: 1 })),
@@ -708,7 +710,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 		replay: "safe",
 		parameters: catalogSearchSchema,
 		description:
-			"Search purchasable catalog products by vector similarity, returning the nearest six by default without attribute validation or reranking. Put the requested description in query; supply hard filters only for explicit constraints. Set purpose to replacement, recommendation, or discovery. For replacement set targetObjectId from the room inventory and category to the requested new product category. Preserve the full natural-language intent in query. Use USD when no currency is specified. Never invent price bounds from the room budget. For an initial request for a cheaper or lower-cost replacement, first call get_product_details with the current inventory catalogId to verify its price, then set maxAmountMinor to that price amountMinor minus 1 and currency to its currency. If the current price is unavailable, ask for a budget before searching for cheaper options. Actual asset color and retailer color availability are distinct; retailer options do not verify the asset variant. Use this for replacement and discovery requests before any room action. Hard filters: category, color, style, material, min/max dimensions in metres, and min/max price as integer minor units plus currency. sectional matches sectional and sectional_sofa only. Color retrieves actual-color matches and explicitly labeled retailer options. Unknown facts cannot satisfy a required filter. Catalog prices default to USD; do not convert other currencies. For follow-ups, set followUp to show_more, cheaper, or smaller and optional searchId from the previous catalog_recommendations result; the server merges prior constraints. cheaper/smaller need one identified priced or sized product (referenceCatalogId, and dimension for smaller) or exactly one current result. Do not restate every previous filter. Do not remove the current object. This tool never changes the room.",
+			"Search purchasable catalog products by vector similarity, returning the nearest six by default without attribute validation or reranking. Put the requested description in query; supply hard filters only for explicit constraints. Set purpose to replacement, recommendation, or discovery. For replacement set targetObjectId from the room inventory and category to the requested new product category. Preserve the full natural-language intent in query. Use USD when no currency is specified. Never invent price bounds from the room budget. For an initial request for a cheaper or lower-cost replacement, first call get_product_details with the current inventory catalogId to verify its price, then set maxAmountMinor to that price amountMinor minus 1 and currency to its currency. If the current price is unavailable, ask for a budget before searching for cheaper options. Actual asset color and retailer color availability are distinct; retailer options do not verify the asset variant. Use this for replacement and discovery requests before any room action. Hard filters: brand/store (brand), category, color, style, material, min/max dimensions in metres, and min/max price as integer minor units plus currency. sectional matches sectional and sectional_sofa only. Color retrieves actual-color matches and explicitly labeled retailer options. Unknown facts cannot satisfy a required filter. Catalog prices default to USD; do not convert other currencies. Brand matches the complete registry source label after case and whitespace normalization, not a verified manufacturer; never guess aliases. 'Show IKEA sofas' requires brand IKEA; 'like IKEA' is descriptive query text, not a brand filter. Unknown brands return no matches; do not drop the filter. For 'Try Article instead', start a new search without followUp, set brand Article, and carry forward other explicit filters and the replacement target. A conflicting brand with followUp is rejected. For follow-ups, set followUp to show_more, cheaper, or smaller and optional searchId from the previous catalog_recommendations result; the server merges prior constraints. cheaper/smaller need one identified priced or sized product (referenceCatalogId, and dimension for smaller) or exactly one current result. Do not restate every previous filter. Do not remove the current object. This tool never changes the room.",
 		execute: (_id, args: Static<typeof catalogSearchSchema>, _update, toolContext, invocation, context) =>
 			runCatalogTool("search_catalog", args, toolContext, invocation, context, async (catalog, signal) => {
 				const room = roomHint(toolContext.planning);
@@ -726,6 +728,16 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 				const prior = history[0];
 				if (followUp && !prior)
 					throw new CatalogError("invalid_arguments", "No prior catalog search in this conversation to refine");
+				if (
+					followUp &&
+					args.brand !== undefined &&
+					normalizeCatalogSearchRequest({ brand: args.brand }).brand !==
+						normalizeCatalogSearchRequest({ brand: prior?.resolvedConstraints.brand }).brand
+				)
+					throw new CatalogError(
+						"invalid_arguments",
+						"Changing brand/store requires a new search without followUp; preserve the other explicit filters and target",
+					);
 				const merged =
 					prior && followUp
 						? mergeCatalogFollowUp(prior, followUp, {
@@ -745,6 +757,7 @@ export function createStudioTools(): AgentHarnessTool<StudioToolContext>[] {
 							target: resolveCatalogTarget(toolContext.planning, purpose, args.targetObjectId, originalQuery),
 							query: args.query ?? originalQuery,
 							category: args.category,
+							brand: args.brand,
 							color: args.color,
 							style: args.style,
 							material: args.material,
@@ -1105,6 +1118,11 @@ export async function studioSystemPrompt({ studio, planning }: StudioToolContext
 		.reverse();
 	return `You are Livi, a helpful assistant for general questions and interior decoration advice. Answer in the user's language.
 Keep UUIDs and internal catalog, object, design, search, and command IDs out of user-facing replies unless the user explicitly requests them. Preserve exact IDs in tool calls and use them internally to track identity. Refer to products by their display names, for example "Polyester Rug — $39.99". When names repeat, distinguish items using known color, dimensions, price, or room position; ask for clarification when those details are insufficient.
+
+Design conversation:
+For furniture discovery and recommendations, speak like a thoughtful interior designer: warm, concise, and curious about how the user wants their space to look and feel. For a broad request such as "give me some sofa options", search immediately using known preferences and present an initial selection of 5-7 options (six by default), unless the user asks for another number or fewer results are available. Base the introduction and any count on actual returned products. Briefly highlight useful differences supported by product facts and room context; let the cards carry detailed specifications. Do not claim every option fits or meets preferences that have not been verified.
+After showing options, ask one short, relevant question to help refine them. Choose the most useful unknown from color, budget, style, materials, size, brand, or use case; offer two or three easy directions when helpful. For example: "What matters most for your new sofa: a particular look, your budget, or space to stretch out?" Adapt to the conversation instead of repeating a fixed script or listing every preference at once. Use what the user has already shared and do not ask again for known requirements. When the brief is already detailed, ask about a meaningful remaining tradeoff only if useful. Do not delay an explicit product choice or room edit with discovery questions.
+Use each answer to refine the options, carrying forward earlier explicit preferences unless the user changes them. For a new search that adds color, budget, material, or size constraints, include the prior applicable filters and replacement target as well as the new constraint. Use brand for explicit brand/store requirements ("Show IKEA sofas"); keep descriptive comparisons ("like IKEA") and use-case preferences in query. Brand matches the full registry source label with case and whitespace normalization; source can be a brand or store, not a verified manufacturer. Do not guess aliases. Cheaper, smaller, and more preserve brand via followUp. For "Try Article instead", start a new search without followUp, changing brand and preserving other explicit filters and the replacement target. Only describe matches supported by supplied product facts. If no products are returned, explain briefly and ask which constraint the user would relax rather than silently dropping it.
 
 Execution:
 For complex tasks, identify a short sequence of steps before making changes. Execute them, verify results, and revise the remaining steps when new information appears. Continue until the requested work is completed or a specific blocker prevents progress; do not stop at a proposal when execution was requested. A request to arrange or rebalance the layout authorizes choosing positions and rotations for existing furniture. It does not authorize removing items or choosing new products unless requested. Ask when ambiguity or missing information prevents a reasonable decision. An explicit, unambiguous product choice in the user's message authorizes the requested addition or replacement.

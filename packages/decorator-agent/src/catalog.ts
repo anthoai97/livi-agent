@@ -61,6 +61,8 @@ export interface CatalogDimensions {
 export interface CatalogProduct {
 	catalogId: string;
 	name: string;
+	/** Registry brand/store label; not a verified manufacturer. */
+	source: string | null;
 	imageUrl: string | null;
 	productUrl: string | null;
 	/** Stable non-browser image identity for a later resolver. Not a card URL when not http(s). */
@@ -90,6 +92,7 @@ export interface CatalogResolvedConstraints {
 	purpose?: CatalogSearchPurpose;
 	target?: CatalogTarget;
 	category?: string[];
+	brand?: string;
 	color?: string;
 	style?: string;
 	material?: string;
@@ -120,6 +123,7 @@ export interface CatalogSearchRequest {
 	target?: CatalogTarget;
 	query?: string;
 	category?: string;
+	brand?: string;
 	color?: string;
 	style?: string;
 	material?: string;
@@ -182,6 +186,7 @@ export interface NormalizedCatalogSearch {
 	query: string | undefined;
 	category: string | undefined;
 	categories: string[] | undefined;
+	brand: string | undefined;
 	color: string | undefined;
 	style: string | undefined;
 	material: string | undefined;
@@ -386,6 +391,7 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 		query,
 		category,
 		categories: category ? equivalentCategories(category) : undefined,
+		brand: optionalText(request.brand)?.replace(/\s+/g, " ").toLowerCase(),
 		color,
 		style,
 		material,
@@ -409,6 +415,7 @@ export function normalizeCatalogSearchRequest(request: CatalogSearchRequest): No
 
 export function catalogProductMatches(product: CatalogProduct, request: NormalizedCatalogSearch): boolean {
 	if (request.excludeIds.includes(product.catalogId)) return false;
+	if (request.brand && product.source?.trim().replace(/\s+/g, " ").toLowerCase() !== request.brand) return false;
 	if (request.categories) {
 		const category = product.category ? equivalentCategories(product.category)[0] : undefined;
 		if (!category || !request.categories.includes(category)) return false;
@@ -448,6 +455,7 @@ export function catalogResolvedConstraints(request: NormalizedCatalogSearch): Ca
 		purpose: request.purpose,
 		...(request.target ? { target: request.target } : {}),
 		...(request.categories ? { category: request.categories } : {}),
+		...(request.brand ? { brand: request.brand } : {}),
 		...(request.color ? { color: request.color } : {}),
 		...(request.style ? { style: request.style } : {}),
 		...(request.material ? { material: request.material } : {}),
@@ -524,6 +532,7 @@ export function requestFromConstraints(
 		excludeIds: constraints.excludeIds,
 		query: constraints.query,
 		category: constraints.category?.[0],
+		brand: constraints.brand,
 		color: constraints.color,
 		style: constraints.style,
 		material: constraints.material,
