@@ -43,6 +43,20 @@ Continued development has moved to the main private codebase for **Livinit**: [O
    + tool history + vectors   + saved edits
 ```
 
+## Screenshots
+
+Catalog recommendations alongside the connected room.
+
+![Livi suggesting coffee tables in Studio](docs/archives/archive01.png)
+
+Product details with price, dimensions, materials, and an option to add to the room.
+
+![Coffee table details and Add to room action](docs/archives/archive02.png)
+
+Room edits through chat: adding furniture, removing an object, and moving a sofa.
+
+![Livi editing room furniture through chat](docs/archives/archive03.png)
+
 ## Reference documentation
 
 - [Architecture](docs/Architect.md)
