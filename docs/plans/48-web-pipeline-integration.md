@@ -5,8 +5,8 @@
 ## Scope
 
 Local integration first, confirmed by user. Use livi-client's supported features:
-conversations, streaming Markdown, Stop, catalog recommendations and typed
-add/replace. Replace legacy chat machinery in place; no alternate pipeline chat,
+one conversation per Studio design, streaming Markdown, Stop, catalog
+recommendations and typed add/replace. Replace legacy chat machinery in place; no alternate pipeline chat,
 old-history import, Keep/Undo, layout, fit or finish controls in chat. Preserve
 generation/editor flows outside chat.
 
@@ -26,11 +26,16 @@ from #44–49. PostgreSQL PR stack #58/#59/#60/#68 is out of scope.
    endpoint means unavailable chat. Own `useAgentChat` above the pane. Capture
    attachment generations, serialize replacement/disposal, fence stale callbacks,
    reconnect and rehydrate without prompt replay. Keep drafts until admission.
-3. **Conversation/Studio binding.** Persist selection per account, workspace,
-   room, design and endpoint; memory when storage is unavailable. Use returned
-   session IDs. New chat and resume; only confirmed missing sessions are recreated.
-   Logout clears account selections. Bind the exact active design/tab from
-   `useStudioAgent`; preserve manual flush and saved-result executor behavior.
+3. **Conversation/Studio binding.** Create with ID `studio-` + designId through
+   `SessionManagement.create`, then attach through the existing PI/Chord services.
+   No identity means unavailable chat. No New chat, selector or storage mapping.
+   The server reuses explicit IDs durably; its existing management queue
+   serializes concurrent creates. ID-less livi-client create still makes a new
+   conversation. Same design on the same server restores after reload, storage
+   clearing or another client; distinct designs stay separate. Old transcripts
+   are untouched. An unexpected returned ID disables chat with an update-server
+   error, without attachment or automatic retry. Bind the exact active design/tab from `useStudioAgent`;
+   preserve manual flush and saved-result executor behavior.
    Freeze editor controls during operations; keep chat Stop usable during saves.
 4. **Rendering/actions.** Render authoritative transcript entry IDs and streaming
    text, validated catalog details and actual tool results. Typed add quantity and
@@ -39,6 +44,20 @@ from #44–49. PostgreSQL PR stack #58/#59/#60/#68 is out of scope.
    backend does not establish stable agent-entry linkage; no backend edits.
 
 ## Validation
+
+- Single-conversation follow-up: server typecheck/build/Biome and all 6 server
+  integration tests passed, including concurrent explicit-ID reuse, distinct
+  designs, ID-less creation and SQLite restart/transcript persistence.
+  Companion typecheck, 70 contracts and production build (base port 3181) passed.
+  Independent production browser passed: no New chat/selector; clearing local
+  and session storage restores the same transcript entry; distinct designs keep
+  separate messages; returning restores only the original conversation; socket
+  reconnect reaches actual Connected and Agent connected states, preserving
+  entry identity without replay. Updated existing e2e also passed in full,
+  including storage clearing and design isolation. Faux model/mocked API only;
+  rapid design/tab switching remains untested.
+
+Earlier integration evidence:
 
 - Contracts: `pnpm pack:studio`, isolated declarations without skipLibCheck,
   nested transcript fields, browser bundle and runtime imports. `pnpm check`.
@@ -50,9 +69,9 @@ from #44–49. PostgreSQL PR stack #58/#59/#60/#68 is out of scope.
   `pnpm build` passed with local agent base inlined. Clean frozen-lockfile install.
 - Both production-build synthetic browser runs passed: existing integrated e2e
   (held save/editor lock/Stop, move/add quantity/duplicate, rejected save,
-  reload, dropped reply, New chat/resume) and independent acceptance
+  reload, dropped reply) and independent acceptance
   (send/stream, mid-response socket reconnect, draft preservation/no replay,
-  Stop, reload, New chat/resume, move/add quantity/rejected save).
+  Stop, reload, move/add quantity/rejected save).
 - Faux-model server and mocked product API only. Rapid design/tab switching
   was not browser-tested. Real model/backend persistence and shared auth/billing
   are not validated. Final changed e2e passed, including preserving the reading
@@ -61,9 +80,9 @@ from #44–49. PostgreSQL PR stack #58/#59/#60/#68 is out of scope.
 ## Shared rollout prerequisites
 
 Authenticated connections; server-side session/Studio ownership; durable
-selection mapping; prompt-credit admission and idempotent charging before prompt
-acceptance; WebSocket hosting and persistent sessions. Browser account scoping
-is not access control. Direct local agent prompts bypass existing `/api/chat`
+session storage; prompt-credit admission and idempotent charging before prompt
+acceptance; WebSocket hosting and persistent sessions. Deterministic session IDs
+are not access control. Direct local agent prompts bypass existing `/api/chat`
 charging; this work does not authorize shared deployment.
 
 ## Unresolved questions

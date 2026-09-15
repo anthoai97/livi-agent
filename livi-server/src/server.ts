@@ -93,8 +93,12 @@ export async function startLiviServer(options: LiviServerOptions = {}) {
 		studio,
 		list: async () =>
 			(await repo.list(undefined, context)).map(({ id, createdAt }) => ({ serverId, sessionId: id, createdAt })),
-		create: async () => {
-			const session = await repo.create({}, context);
+		create: async (createOptions) => {
+			if (createOptions.id !== undefined) {
+				const existing = (await repo.list(undefined, context)).find((item) => item.id === createOptions.id);
+				if (existing) return { serverId, sessionId: existing.id, createdAt: existing.createdAt };
+			}
+			const session = await repo.create(createOptions, context);
 			try {
 				return { serverId, sessionId: session.metadata.id, createdAt: session.metadata.createdAt };
 			} finally {
