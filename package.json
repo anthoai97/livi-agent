@@ -14,6 +14,7 @@
     "dev": "pnpm build && pnpm --parallel --filter @livi/server --filter @livi/client dev",
     "test:session": "pnpm --filter @earendil-works/pi-session-backend-sqlite-node test",
     "start": "pnpm build && pnpm --filter @livi/server start",
+    "start:server": "pnpm --filter '@livi/server...' build && pnpm --filter @livi/server start",
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test:browser": "tsx scripts/browser-smoke.ts",
     "smoke:studio": "tsx scripts/studio-json-smoke.ts",
