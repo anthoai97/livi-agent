@@ -93,6 +93,63 @@ function messages(transcript: Transcript): string[] {
 }
 
 test(
+	"explicit session IDs reuse one durable conversation across concurrent clients and restart",
+	{ timeout: 30_000 },
+	async (t) => {
+		const dataDirectory = await mkdtemp(join(tmpdir(), "livi-explicit-session-"));
+		const faux = fauxProvider({ provider: "google", models: [{ id: "gemini-3.8-flash" }] });
+		const models = createModels();
+		models.setProvider(faux.provider);
+		faux.setResponses([fauxAssistantMessage("Remembered design.")]);
+		const errors: Error[] = [];
+		let server = await startLiviServer({ dataDirectory, port: 0, models, onError: (error) => errors.push(error) });
+		const connections: Awaited<ReturnType<typeof connect>>[] = [];
+		t.after(async () => {
+			await Promise.all(connections.map(({ client }) => client.dispose()));
+			await server.close();
+			await rm(dataDirectory, { recursive: true, force: true });
+		});
+		const first = await connect(server);
+		const second = await connect(server);
+		connections.push(first, second);
+		const id = "studio-design-a";
+		const rooms = await Promise.all(
+			Array.from({ length: 8 }, (_, index) => (index % 2 ? first : second).management.create({ id }, context)),
+		);
+		for (const room of rooms) assert.deepEqual(room, rooms[0]);
+		assert.equal(rooms[0]!.sessionId, id);
+		await eventually(() => first.directory.state.value?.sessions.length === 1);
+		const attached = await attach(first, id);
+		assert.equal((await attached.controller.prompt({ message: "Remember this design" }, context)).accepted, true);
+		await eventually(
+			() =>
+				messages(attached.transcript).includes("Remembered design.") &&
+				attached.transcript.state.value?.snapshot?.operation === null,
+		);
+		assert.deepEqual(await second.management.create({ id }, context), rooms[0]);
+		const observer = await attach(second, id);
+		assert.deepEqual(messages(observer.transcript), ["Remember this design", "Remembered design."]);
+		const other = await second.management.create({ id: "studio-design-b" }, context);
+		assert.deepEqual(messages((await attach(second, other.sessionId)).transcript), []);
+		const defaults = await Promise.all([first.management.create({}, context), second.management.create({}, context)]);
+		assert.notEqual(defaults[0].sessionId, defaults[1].sessionId);
+		await Promise.all(connections.map(({ client }) => client.dispose()));
+		await server.close();
+		server = await startLiviServer({ dataDirectory, port: 0, models, onError: (error) => errors.push(error) });
+		const restored = await connect(server);
+		connections.push(restored);
+		assert.deepEqual(await restored.management.create({ id }, context), rooms[0]);
+		assert.equal(restored.directory.state.value?.sessions.length, 4);
+		assert.deepEqual(messages((await attach(restored, id)).transcript), [
+			"Remember this design",
+			"Remembered design.",
+		]);
+		assert.equal(faux.state.callCount, 1);
+		assert.deepEqual(errors, []);
+	},
+);
+
+test(
 	"real WebSocket routes isolate conversations, stream, reconnect, and survive SQLite restart",
 	{ timeout: 30_000 },
 	async (t) => {

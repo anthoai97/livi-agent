@@ -1,43 +1,90 @@
-# #48 — Use the agent engine in web-pipeline chat
+# #48 — Agent chat in web-pipeline
 
 [Issue](https://github.com/anthoai97/livi-agent/issues/48)
 
-Keep web-pipeline's chat UI; route messages, streaming, history, Stop, and product actions through `livi-server`. Use [livi-client](../../livi-client/src/main.tsx) as the working reference.
+## Scope
 
-## Starting point
+Local integration first, confirmed by user. Use livi-client's supported features:
+one conversation per Studio design, streaming Markdown, Stop, catalog
+recommendations and typed add/replace. Replace legacy chat machinery in place; no alternate pipeline chat,
+old-history import, Keep/Undo, layout, fit or finish controls in chat. Preserve
+generation/editor flows outside chat.
 
-- web-pipeline: `components/StudioScreen.tsx` wires `ChatInterface.tsx` to `usePipelineRun.sendChatMessage` / `iterateDesign`, then `ApiClient.runChat` → `/api/chat` → pipeline SSE. History and feedback use separate authenticated APIs.
-- livi-agent: bootstrap → binary WebSocket → Chord services. Agent sessions own the transcript; Studio owns room execution and saved revisions.
-- `scripts/pack-studio-contracts.mjs` exports Studio contracts only. Chat contracts remain in a private workspace package.
-- web-pipeline uses React 18 / Next.js; livi-client uses React 19 / Vite. Port the integration logic into existing components; do not copy the app shell or Vite configuration.
-- Companion [Studio adapter #36](https://github.com/Livinit-ai/web-pipeline/issues/36) is closed, but inspected web-pipeline `main` has no obvious agent adapter/package. Locate and verify its implementation revision before relying on room actions.
+Companion baseline: `feat/studio-agent-batch-edits`, PR #50,
+`308f6a3d65169e183f0a4131952b381e7b8e1621`; includes Studio adapter/add/replace
+from #44–49. PostgreSQL PR stack #58/#59/#60/#68 is out of scope.
 
-## Implementation order
+## Implementation
 
-1. **Export usable client contracts — livi-agent.** Extend the existing packaging script and browser-safe exports with `SessionDirectory`, `SessionManagement`, `AgentController`, `Transcript`, and catalog types/helpers. Keep Studio exports in the same handoff. Resolve transcript declaration dependencies outside the workspace without shipping server runtime into the browser. Update `scripts/fixtures/studio/consumer.ts` and `docs/Studio-Contract.md`; generate versioned tarballs and install them in web-pipeline.
+1. **Contracts — livi-agent.** Export SessionDirectory, SessionManagement,
+   AgentController, Transcript, catalog types/helpers and Studio together through
+   `@livi/studio-contracts@0.7.0`. Bundle agent/AI/telemetry declarations; exclude
+   their runtime. Source: `packages/decorator-agent/src/contracts.ts`.
+   Update packaging fixture/docs. Contracts committed as `69cbdf8`.
+2. **Connection/UI — web-pipeline.** One `NEXT_PUBLIC_LIVI_SERVER_BASE_URL`;
+   fetch agent bootstrap and resolve its WebSocket path there. No configured
+   endpoint means unavailable chat. Own `useAgentChat` above the pane. Capture
+   attachment generations, serialize replacement/disposal, fence stale callbacks,
+   reconnect and rehydrate without prompt replay. Keep drafts until admission.
+3. **Conversation/Studio binding.** Create with ID `studio-` + designId through
+   `SessionManagement.create`, then attach through the existing PI/Chord services.
+   No identity means unavailable chat. No New chat, selector or storage mapping.
+   The server reuses explicit IDs durably; its existing management queue
+   serializes concurrent creates. ID-less livi-client create still makes a new
+   conversation. Same design on the same server restores after reload, storage
+   clearing or another client; distinct designs stay separate. Old transcripts
+   are untouched. An unexpected returned ID disables chat with an update-server
+   error, without attachment or automatic retry. Bind the exact active design/tab from `useStudioAgent`;
+   preserve manual flush and saved-result executor behavior.
+   Freeze editor controls during operations; keep chat Stop usable during saves.
+4. **Rendering/actions.** Render authoritative transcript entry IDs and streaming
+   text, validated catalog details and actual tool results. Typed add quantity and
+   original replacement target/revision/catalog fields; reject stale/wrong-design
+   choices. Preserve mobile composer and content-based feedback. Existing feedback
+   backend does not establish stable agent-entry linkage; no backend edits.
 
-2. **Connect chat — web-pipeline.** Add one focused `features/chat/useAgentChat.ts` hook and a browser transport based on [transport.ts](../../livi-client/src/transport.ts). Own the hook above the chat pane so hiding it does not disconnect the session. Configure the agent base URL; fetch its `/api/bootstrap`, resolve `wsPath` against that base, and use `ws:` / `wss:` appropriately. Configure exact `STUDIO_ALLOWED_ORIGINS`; keep Next.js's existing API routes. Subscribe to server services, create/select sessions, serialize attachment, then bind session services to the captured attachment generation. Dispose subscriptions and sockets on replacement/unmount; reconnect and rehydrate without resending prompts.
+## Validation
 
-3. **Replace chat state and handlers — web-pipeline.** Modify `StudioScreen.tsx` and `ChatInterface.tsx` in place. Send through `AgentController.prompt({ message, action? })`; clear the draft only after acceptance. Render `Transcript.state.snapshot.transcript` plus `operation.streamingMessage`, keyed by entry IDs. Use operation state for activity/Stop; call `requestAbort(operation.id)`. Show rejected prompts, connection loss, and failed results distinctly. Route injected prompts through this same path. Remove obsolete chat-only SSE listeners, synthetic replies, completion effects, and automatic retries once their callers move. Retain pipeline code still used for generation or other flows.
+- Single-conversation follow-up: server typecheck/build/Biome and all 6 server
+  integration tests passed, including concurrent explicit-ID reuse, distinct
+  designs, ID-less creation and SQLite restart/transcript persistence.
+  Companion typecheck, 70 contracts and production build (base port 3181) passed.
+  Independent production browser passed: no New chat/selector; clearing local
+  and session storage restores the same transcript entry; distinct designs keep
+  separate messages; returning restores only the original conversation; socket
+  reconnect reaches actual Connected and Agent connected states, preserving
+  entry identity without replay. Updated existing e2e also passed in full,
+  including storage clearing and design isolation. Faux model/mocked API only;
+  rapid design/tab switching remains untested.
 
-4. **Restore conversations and attach the current room — both repos.** Proposed mapping: authenticated user + workspace + room + design → selected agent session; each variant/design retains its own conversation, with explicit New chat. For local validation, persist only this selection mapping in browser storage; the agent transcript remains authoritative. Reattach on reload and recreate only explicitly missing sessions. Clear account-specific bindings on logout. Use `StudioSession.bind({ designId, tabId })` for the exact active editor tab; never choose the first connected Studio. Flush pending manual edits through the adapter before action snapshots. Freeze targets during operations; serialize later switches and ignore old callbacks. General chat works without Studio; room actions require a ready binding. Verify adapter support for every exposed action, including add/replace.
+Earlier integration evidence:
 
-5. **Render results in existing UI — web-pipeline.** Adapt the existing product carousel to validated catalog details using livi-client's rendering logic. Send typed `add_asset` / `replace_asset` actions with the original product, quantity, object, design, and revision fields. Disable stale/wrong-design actions; mark completion only from saved tool results. Preserve Markdown, mobile composer behavior, and feedback; map feedback to stable session/entry IDs and verify its backend accepts them. Resolve old-history and pipeline-only action decisions below before removing those paths. Do not manufacture old pipeline response blocks from agent text.
+- Contracts: `pnpm pack:studio`, isolated declarations without skipLibCheck,
+  nested transcript fields, browser bundle and runtime imports. `pnpm check`.
+  Focused catalog/transcript/Studio runtime tests: 90 passed.
+  Initial unintended broad decorator suite: 143 passed, 2 unrelated failures
+  in unchanged decorator-session tests (5s timeout; expected tool list omitted
+  existing `list_catalog_brands`).
+- Companion: `pnpm type-check` passed; `pnpm test:contracts` 70 passed;
+  `pnpm build` passed with local agent base inlined. Clean frozen-lockfile install.
+- Both production-build synthetic browser runs passed: existing integrated e2e
+  (held save/editor lock/Stop, move/add quantity/duplicate, rejected save,
+  reload, dropped reply) and independent acceptance
+  (send/stream, mid-response socket reconnect, draft preservation/no replay,
+  Stop, reload, move/add quantity/rejected save).
+- Faux-model server and mocked product API only. Rapid design/tab switching
+  was not browser-tested. Real model/backend persistence and shared auth/billing
+  are not validated. Final changed e2e passed, including preserving the reading
+  position during streaming.
 
-6. **Complete deployment boundary — both repos.** Local integration can use the current server. Shared deployment needs authenticated connections, server-side session/Studio ownership checks, durable design-to-session mapping, and existing prompt-credit enforcement. Today `/api/chat` charges credits; direct agent WebSocket prompts bypass it. Enforce admission and idempotent charging at the server before accepting a prompt, including reconnect cases. Configure a WebSocket-capable endpoint and persistent session storage. These are prerequisites for shared rollout, not browser-only checks.
+## Shared rollout prerequisites
 
-## Validation and delivery
-
-- Packaging: `pnpm pack:studio`; isolated typecheck, browser bundle, and runtime imports must include chat services.
-- web-pipeline: `pnpm type-check`, `pnpm build`, relevant existing contract checks. Respect its rule against adding unit-test files without a request.
-- Browser acceptance: create chat → stream → Stop → reload; reconnect mid-response without duplicate prompts; switch designs/tabs rapidly without transcript or command leakage.
-- Real Studio: save a manual move, ask about the room, select a recommendation, add/replace, then reload. Verify saved results, stale revisions, offline Studio, and save failures. Simulated JSON smoke is insufficient.
-- Before shared rollout: two accounts cannot list/attach each other's sessions or Studios; rejected/duplicate admission does not double-charge. Verify feedback and the agreed old-history behavior.
-- Run `pnpm check` and affected server/contract tests when changing livi-agent code. Use `gh stack` within each repo: contracts → connection/session flow → UI/room actions → access/billing and integrated evidence. Link cross-repo dependencies; update this plan as decisions land.
+Authenticated connections; server-side session/Studio ownership; durable
+session storage; prompt-credit admission and idempotent charging before prompt
+acceptance; WebSocket hosting and persistent sessions. Deterministic session IDs
+are not access control. Direct local agent prompts bypass existing `/api/chat`
+charging; this work does not authorize shared deployment.
 
 ## Unresolved questions
 
-- Is #48 local integration first, or production-ready migration including access control and billing?
-- Should old pipeline conversations be imported into agent sessions or retained as read-only history? Proposed: read-only history; new messages use agent sessions.
-- Must chat-driven generation, layout options, fit confirmation, finish edits, and edit-preview Keep/Undo work at cutover? These need explicit agent support or an agreed separate flow; do not silently remove them.
-- Is the proposed per-design conversation mapping correct, and which web-pipeline revision contains the Studio adapter?
+None for local scope. Production rollout and real-backend acceptance are separate.
