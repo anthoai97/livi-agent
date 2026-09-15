@@ -1,36 +1,49 @@
 # Livi
 
-An interior design chat agent built with React, Node.js, Gemini, and SQLite. Browse catalog products and connect Studio to edit room objects. General chat works without Studio.
+**Complete and archived.** This research prototype successfully implemented a custom interior decorator agent built on the open-source PI core. The repository is retained as a reference.
 
-## Run locally
+Continued development has moved to the main private codebase for **Livinit**: [Open the product](https://web.livinit.ai/dashboard).
 
-Requires Node 24+ and pnpm 10.17.0.
+## What we achieved
 
-```sh
-pnpm install --frozen-lockfile
-cp -n .env.example .env
-# Set GEMINI_API_KEY in .env
-pnpm dev
+- **Custom agent:** adapted PI's agent harness, session services, and transport for interior design conversations powered by Gemini.
+- **Persistent chat:** streaming responses, cancellation, SQLite conversation history, reconnect, and interrupted-operation recovery.
+- **Catalog discovery:** semantic product search, brand browsing, product details, recommendation cards, and follow-ups such as "show more," "cheaper," and "smaller."
+- **Studio integration:** attach a conversation to a design, read room context and selection, and send edits to Studio for saving.
+- **Room editing tools:** move, rotate, remove, add, replace, and duplicate objects; batch related edits and reverse supported saved changes.
+- **Controlled execution:** design and revision checks, saved action history, and protection against replaying room edits with unknown outcomes.
+
+## Agent tools
+
+| Purpose | Tools |
+| --- | --- |
+| Read the room | `get_room_context` |
+| Browse products | `search_catalog`, `list_catalog_brands`, `get_product_details` |
+| Edit objects | `move_object`, `rotate_object`, `remove_object`, `add_object`, `replace_object`, `duplicate_object` |
+| Group edits | `batch_room_edits` |
+
+## Overall architecture
+
+```text
+                React chat
+                    |
+          PI WebSocket transport
+                    |
+               Node.js server
+                    |
+         Custom decorator agent <----> Gemini
+            (PI AgentHarness)
+                    |
+        +-----------+-----------+
+        |           |           |
+     Sessions    Catalog      Studio broker
+        |         tools         |
+      SQLite        |       Connected Studio
+   conversations PostgreSQL   room context
+   + tool history + vectors   + saved edits
 ```
 
-Open http://127.0.0.1:5173. Run `pnpm start` to build and serve the app at http://127.0.0.1:3001.
-
-Optional settings in `.env`:
-
-- `CATALOG_DATABASE_URL`: enable catalog search.
-- `STUDIO_ALLOWED_ORIGINS`: allow your Studio origin, then connect Studio and click **Attach design**.
-- `LIVI_DEBUG=1`: show readable agent execution steps in the terminal. Leave `LIVI_DEBUG_PROMPTS` unset to avoid raw request dumps.
-
-Restart the server after changing `.env`. This prototype is intended for local use and has no login.
-
-## Checks
-
-```sh
-pnpm check
-pnpm test
-```
-
-## Documentation
+## Reference documentation
 
 - [Architecture](docs/Architect.md)
 - [Studio integration](docs/Studio-Contract.md)
