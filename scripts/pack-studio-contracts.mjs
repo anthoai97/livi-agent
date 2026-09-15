@@ -3,6 +3,8 @@ import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { rollup } from "rollup";
+import { dts } from "rollup-plugin-dts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
@@ -22,19 +24,33 @@ for (const name of ["@earendil-works/chord", "@earendil-works/pi-protocol", "@ea
 const version = JSON.parse(await readFile(join(root, "packages/decorator-agent/package.json"), "utf8")).version;
 const packageDirectory = join(temporary, "package");
 await mkdir(packageDirectory);
-run("pnpm", [
-	"exec",
-	"tsc",
-	"--target",
-	"es2022",
-	"--module",
-	"nodenext",
-	"--skipLibCheck",
-	"--declaration",
-	"--outDir",
-	packageDirectory,
-	"packages/decorator-agent/src/services/studio.ts",
-]);
+run("pnpm", ["--filter", "@earendil-works/pi-agent-core...", "build"]);
+const entryPoint = join(root, "packages/decorator-agent/src/contracts.ts");
+const { build } = await import("../packages/chord/node_modules/esbuild/lib/main.js");
+await build({
+	entryPoints: [entryPoint],
+	outfile: join(packageDirectory, "contracts.js"),
+	bundle: true,
+	platform: "browser",
+	format: "esm",
+	packages: "external",
+});
+// Inline type-only agent/AI dependencies; never package their runtime or provider SDKs.
+const declarations = await rollup({
+	input: entryPoint,
+	external: (id) =>
+		!id.startsWith(".") &&
+		!id.startsWith("/") &&
+		!["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-telemetry"].includes(id),
+	plugins: [
+		dts({
+			tsconfig: join(root, "packages/decorator-agent/tsconfig.build.json"),
+			respectExternal: true,
+		}),
+	],
+});
+await declarations.write({ file: join(packageDirectory, "contracts.d.ts"), format: "es" });
+await declarations.close();
 await writeFile(
 	join(packageDirectory, "package.json"),
 	JSON.stringify(
@@ -42,9 +58,9 @@ await writeFile(
 			name: "@livi/studio-contracts",
 			version,
 			type: "module",
-			files: ["studio.js", "studio.d.ts"],
-			exports: { ".": { types: "./studio.d.ts", import: "./studio.js" } },
-			dependencies: { "@earendil-works/chord": "0.85.1" },
+			files: ["contracts.js", "contracts.d.ts"],
+			exports: { ".": { types: "./contracts.d.ts", import: "./contracts.js" } },
+			dependencies: { "@earendil-works/chord": "0.85.1", "@earendil-works/pi-protocol": "0.85.1" },
 		},
 		null,
 		2,
@@ -90,7 +106,6 @@ run("pnpm", [
 	"exec",
 	"tsc",
 	"--strict",
-	"--skipLibCheck",
 	"--target",
 	"es2022",
 	"--module",
@@ -101,7 +116,6 @@ run("pnpm", [
 	join(consumer, "dist"),
 	join(consumer, "consumer.ts"),
 ]);
-const { build } = await import("../packages/chord/node_modules/esbuild/lib/main.js");
 await build({
 	entryPoints: [join(consumer, "consumer.ts")],
 	outfile: join(consumer, "browser.js"),
@@ -125,4 +139,4 @@ await writeFile(
 		2,
 	),
 );
-console.log(`Verified isolated Studio contract consumer. Tarballs and evidence: ${output}`);
+console.log(`Verified isolated chat and Studio contract consumer. Tarballs and evidence: ${output}`);

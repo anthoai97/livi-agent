@@ -1,11 +1,90 @@
+import type { Context, RemoteServices } from "@earendil-works/chord";
 import { Client } from "@earendil-works/pi-client";
 import {
+	AgentController,
+	type AgentPromptRequest,
+	CATALOG_RECOMMENDATION_KIND,
+	type CatalogRecommendationDetails,
+	isCatalogRecommendationDetails,
+	SessionDirectory,
+	SessionManagement,
 	STUDIO_CONTRACT_VERSION,
 	type StudioCommand,
 	type StudioCommandResult,
 	StudioConnection,
+	StudioDirectory,
+	StudioSession,
 	type StudioSnapshot,
+	sanitizeCatalogProduct,
+	Transcript,
+	type TranscriptState,
 } from "@livi/studio-contracts";
+
+// Typecheck the same service acquisition and nested state used by an external chat UI.
+export async function connectChat(services: RemoteServices, context: Context) {
+	const directory = services.use(SessionDirectory);
+	const management = services.use(SessionManagement);
+	const session = directory.state.value?.sessions[0] ?? (await management.create({}, context));
+	await management.attach(session.sessionId, context);
+	const transcript = services.use(Transcript);
+	const unsubscribe = transcript.state.subscribe((state) => renderTranscript(state));
+	const request: AgentPromptRequest = {
+		message: "Add two chairs",
+		action: { type: "add_asset", selectedProductId: "catalog-chair", quantity: 2 },
+	};
+	const controller = services.use(AgentController);
+	const response = await controller.prompt(request, context);
+	if (!response.accepted) throw new Error(response.error.message);
+	await controller.requestAbort(response.operationId, context);
+	unsubscribe();
+	await management.detach(context);
+}
+
+function renderTranscript(state: TranscriptState): string[] {
+	const snapshot = state.snapshot;
+	if (!snapshot) return [];
+	// Unresolved declaration dependencies must not silently erase nested types.
+	// @ts-expect-error Operation status is a string union, not a number.
+	const invalidStatus: number = snapshot.operation?.status;
+	void invalidStatus;
+	const text = snapshot.transcript.flatMap((entry) => {
+		const id: string = entry.id;
+		if (entry.type !== "message") return [id];
+		if (entry.message.role === "toolResult" && isCatalogRecommendationDetails(entry.message.details)) {
+			return entry.message.details.products.map((product) => sanitizeCatalogProduct(product).name);
+		}
+		return [id];
+	});
+	for (const content of snapshot.operation?.streamingMessage?.content ?? []) {
+		if (content.type === "text") text.push(content.text);
+	}
+	if (snapshot.lastResult?.status === "failed") text.push(snapshot.lastResult.error?.message ?? "Failed");
+	if (state.event?.type === "message_end") text.push(state.event.entryId ?? "");
+	return text;
+}
+
+const recommendations: CatalogRecommendationDetails = {
+	kind: CATALOG_RECOMMENDATION_KIND,
+	searchId: "example-search",
+	products: [],
+	resolvedConstraints: {},
+	pagination: { limit: 6, offset: 0, exhausted: true },
+	shownIds: [],
+	binding: null,
+	followUp: null,
+};
+if (!isCatalogRecommendationDetails(recommendations)) throw new Error("Catalog helper import failed");
+for (const [service, id] of [
+	[SessionDirectory, "pi.session-directory"],
+	[SessionManagement, "pi.session-management"],
+	[AgentController, "pi.agent-controller"],
+	[Transcript, "pi.transcript"],
+	[StudioConnection, "livi.studio-connection"],
+	[StudioDirectory, "livi.studio-directory"],
+	[StudioSession, "livi.studio-session"],
+] as const) {
+	if (service.id !== id) throw new Error(`Unexpected service identity: ${service.id}`);
+}
 
 const snapshot: StudioSnapshot = {
 	designId: "example-design",

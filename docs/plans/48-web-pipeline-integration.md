@@ -8,9 +8,10 @@ Keep web-pipeline's chat UI; route messages, streaming, history, Stop, and produ
 
 - web-pipeline: `components/StudioScreen.tsx` wires `ChatInterface.tsx` to `usePipelineRun.sendChatMessage` / `iterateDesign`, then `ApiClient.runChat` → `/api/chat` → pipeline SSE. History and feedback use separate authenticated APIs.
 - livi-agent: bootstrap → binary WebSocket → Chord services. Agent sessions own the transcript; Studio owns room execution and saved revisions.
-- `scripts/pack-studio-contracts.mjs` exports Studio contracts only. Chat contracts remain in a private workspace package.
+- `scripts/pack-studio-contracts.mjs` exports chat and Studio contracts together as `@livi/studio-contracts@0.7.0`; transcript type dependencies are inlined without agent/server runtime.
 - web-pipeline uses React 18 / Next.js; livi-client uses React 19 / Vite. Port the integration logic into existing components; do not copy the app shell or Vite configuration.
-- Companion [Studio adapter #36](https://github.com/Livinit-ai/web-pipeline/issues/36) is closed, but inspected web-pipeline `main` has no obvious agent adapter/package. Locate and verify its implementation revision before relying on room actions.
+- Verified companion adapter revision: `308f6a3d65169e183f0a4131952b381e7b8e1621`, PR #50 tip `feat/studio-agent-batch-edits`, includes adapter/add/replace work from #44–49. Implement in `/private/tmp/livi-48-web-pipeline`; preserve the existing user checkout.
+- Scope: opt-in local agent chat first; retain old history and pipeline-only design controls. Shared deployment access/billing remains step 6. Existing feedback API saves by content hash; agent entry IDs do not establish stable backend linkage.
 
 ## Implementation order
 
