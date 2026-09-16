@@ -2,7 +2,7 @@
 
 ## Writing Mode
 
-- Make the plan/document extremely concise. Sacrifice grammar for the sake of concision.
+- Keep plans and documents concise without sacrificing clarity.
 - At the end of each plan, give me a list of unresolved questions to answer, if any.
 
 ## Engineering principles
@@ -49,6 +49,6 @@ disagree before saying what you changed.
 
 ## User Override
 
-Explicit task instructions override repository defaults. Ask when scope or authorization remains unclear. This does not override sandbox or approval enforcement.
+Explicit task instructions override repository defaults. Ask about material unresolved scope decisions or missing authorization. Continue independent authorized work while waiting. This does not override sandbox or approval enforcement.
 
 The user's instructions take precedence over guidelines provided in a skill. If explicit user instructions conflict with a skill's instructions, prioritize the user's instructions.

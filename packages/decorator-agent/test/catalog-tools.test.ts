@@ -12,6 +12,7 @@ import {
 	type CatalogProduct,
 	type CatalogRecommendationDetails,
 	createMemoryCatalogAccess,
+	isCatalogRecommendationDetails,
 	mergeCatalogFollowUp,
 } from "../src/catalog.ts";
 import { loadRecommendationHistory } from "../src/catalog-history.ts";
@@ -488,6 +489,61 @@ function searchDetails(entries: Awaited<ReturnType<DecoratorSession["lane"]["fin
 	if (toolResult?.type !== "message" || toolResult.message.role !== "toolResult") return undefined;
 	return toolResult.message.details as CatalogRecommendationDetails;
 }
+
+it("keeps desk and chair searches independent within one turn and follows up on desks", async () => {
+	const chair = product("study-chair", { name: "Study Chair", category: "chair" });
+	const catalog = createMemoryCatalogAccess([usdMini, usdCheap, chair]);
+	const { runtime, faux, fake } = await session({ catalog, studio: true });
+	faux.setResponses([
+		fauxAssistantMessage(
+			[
+				fauxToolCall("search_catalog", { query: "study table", category: "desk", limit: 1 }),
+				fauxToolCall("search_catalog", { query: "study chair", category: "chair", limit: 1 }),
+			],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Here are study table and chair options."),
+	]);
+	expect(
+		await runtime.controller.prompt({ message: "Can you add a study table and a chair?" }, context),
+	).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const entries = await runtime.lane.findEntries({ order: "oldestFirst" }, context);
+	const results = entries.flatMap((entry) => {
+		if (
+			entry.type !== "message" ||
+			entry.message.role !== "toolResult" ||
+			entry.message.isError ||
+			!isCatalogRecommendationDetails(entry.message.details)
+		)
+			return [];
+		return [entry.message.details];
+	});
+	expect(results).toHaveLength(2);
+	const [desks, chairs] = results;
+	if (!desks || !chairs) throw new Error("Expected both item searches");
+	expect(desks.products).toHaveLength(1);
+	expect(desks.products[0]?.category).toBe("desk");
+	expect(chairs.products.map((entry) => entry.catalogId)).toEqual([chair.catalogId]);
+	expect(desks.searchId).not.toBe(chairs.searchId);
+	expect(desks.resolvedConstraints.query).toBe("study table");
+	expect(chairs.resolvedConstraints.query).toBe("study chair");
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("search_catalog", { followUp: "show_more", searchId: desks.searchId }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("Here is another study table."),
+	]);
+	expect(await runtime.controller.prompt({ message: "Show more desks" }, context)).toMatchObject({ accepted: true });
+	await runtime.lane.waitForIdle(context);
+	const more = searchDetails(await runtime.lane.findEntries({ order: "oldestFirst" }, context));
+	expect(more?.searchId).toBe(desks.searchId);
+	expect(more?.products).toHaveLength(1);
+	expect(more?.products[0]?.category).toBe("desk");
+	expect(more?.products[0]?.catalogId).not.toBe(desks.products[0]?.catalogId);
+	expect(await loadRecommendationHistory(runtime.studio.session, context, chairs.searchId)).toEqual([chairs]);
+	expect(fake?.state.commands).toEqual([]);
+});
 
 it("follow-ups cheaper, smaller, and show more change only the intended constraint", async () => {
 	const catalog = createMemoryCatalogAccess(catalogProducts);

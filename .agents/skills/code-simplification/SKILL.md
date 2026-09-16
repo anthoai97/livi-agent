@@ -32,7 +32,7 @@ Review requests produce findings; edit only when requested.
 Don't change what the code does — only how it expresses it. All inputs, outputs, side effects, error behavior, and edge cases must remain identical. If you're not sure a simplification preserves behavior, don't make it.
 
 ```
-ASK BEFORE EVERY CHANGE:
+SELF-CHECK BEFORE EACH CHANGE:
 → Does this produce the same output for every input?
 → Does this maintain the same error behavior?
 → Does this preserve the same side effects and ordering?
@@ -40,6 +40,14 @@ ASK BEFORE EVERY CHANGE:
 ```
 
 ### 2. Follow Project Conventions
+
+Before editing, check the available skill catalog and project skill directories
+for relevant `*-best-practice` or `*-best-practices` skills. Read and apply those
+matching the language or framework being simplified; announce their use. For
+TypeScript, use [typescript-best-practices](../typescript-best-practices/SKILL.md).
+Skip unrelated skills and continue normally when none apply. User instructions,
+repository conventions, and this task's behavior-preserving scope take precedence;
+best-practice guidance does not authorize unrelated refactors or behavior changes.
 
 Simplification means making code more consistent with the codebase, not imposing external preferences. Before simplifying:
 
@@ -70,20 +78,6 @@ function getStatusLabel(item: Item): string {
   if (item.isUpdated) return 'Updated';
   if (item.isArchived) return 'Archived';
   return 'Active';
-}
-```
-
-```typescript
-// UNCLEAR: Chained reduces with inline logic
-const result = items.reduce((acc, item) => ({
-  ...acc,
-  [item.id]: { ...acc[item.id], count: (acc[item.id]?.count ?? 0) + 1 }
-}), {});
-
-// CLEAR: Named intermediate step
-const countById = new Map<string, number>();
-for (const item of items) {
-  countById.set(item.id, (countById.get(item.id) ?? 0) + 1);
 }
 ```
 
@@ -179,16 +173,6 @@ If the "simplified" version is harder to understand or review, revert. Not every
 ### TypeScript / JavaScript
 
 ```typescript
-// SIMPLIFY: Unnecessary async wrapper
-// Before
-async function getUser(id: string): Promise<User> {
-  return await userService.findById(id);
-}
-// After
-function getUser(id: string): Promise<User> {
-  return userService.findById(id);
-}
-
 // SIMPLIFY: Verbose conditional assignment
 // Before
 let displayName: string;

@@ -580,6 +580,7 @@ function transcriptItems(entries: TranscriptEntry[], streaming?: StreamingMessag
 		}
 		const cards = catalogDetails(entry);
 		if (cards) {
+			if (pending) items.push({ id: pending.id, kind: "cards", details: pending.details });
 			pending = { id: entry.id, details: cards };
 			continue;
 		}

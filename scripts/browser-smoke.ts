@@ -53,6 +53,8 @@ const catalog = createMemoryCatalogAccess([
 		color: "yellow",
 		shape: "L-shaped",
 	}),
+	catalogProduct("study-desk", { name: "Oak Study Desk", category: "desk" }),
+	catalogProduct("study-chair", { name: "Oak Study Chair", category: "chair" }),
 ]);
 
 const directory = await mkdtemp(join(tmpdir(), "livi-browser-"));
@@ -395,6 +397,25 @@ try {
 	await page.locator("[data-catalog-id='yellow-bend']").last().scrollIntoViewIfNeeded();
 	await page.screenshot({ path: "artifacts/chat-browser-mobile.png" });
 	await page.locator(".message.assistant").last().screenshot({ path: "artifacts/chat-cards-mobile.png" });
+	faux.appendResponses([
+		fauxAssistantMessage(
+			[fauxToolCall("search_catalog", { category: "desk" }), fauxToolCall("search_catalog", { category: "chair" })],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("Here are study desks and chairs to consider."),
+	]);
+	await page.getByRole("button", { name: "Chats", exact: true }).click();
+	await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+	await page.getByRole("textbox", { name: "Message", exact: true }).fill("Can you add a study table and a chair?");
+	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page.getByText("Here are study desks and chairs to consider.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
+	assert.equal(await page.locator("[data-catalog-id='study-desk']").count(), 1);
+	assert.equal(await page.locator("[data-catalog-id='study-chair']").count(), 1);
+	await page.reload();
+	await page.getByText("Here are study desks and chairs to consider.", { exact: true }).waitFor();
+	assert.equal(await page.locator("[data-catalog-id='study-desk']").count(), 1);
+	assert.equal(await page.locator("[data-catalog-id='study-chair']").count(), 1);
 	assert.deepEqual(errors, []);
 	console.log(
 		"Browser verification passed: chat sidebar toggle, two chats, streaming, Stop, restart recovery, Studio panel toggle and attachment, named object without selection, saved response, lost reply, next explicit edit after reconnect, catalog cards from saved details, and selected replacement with pinned target and no reload resubmission. Synthetic JSON saves only.",
